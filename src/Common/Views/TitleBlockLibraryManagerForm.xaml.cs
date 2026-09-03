@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -31,7 +30,6 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
     private readonly BindingList<TitleBlockRow> _displayRows = new();
     private bool _loading;
     private bool _dirty;
-    private bool _showingValidationError;
     private int _sortColumnIndex = -1;
     private ListSortDirection _sortDirection = ListSortDirection.Ascending;
     private HashSet<string> _presentBlockNames = new(StringComparer.OrdinalIgnoreCase);
@@ -45,17 +43,7 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
         AddColumns();
         _grid.ItemsSource = _displayRows;
 
-        // 单元格编辑提交即标记未保存（绑定 UpdateSourceTrigger=PropertyChanged，等价原 CurrentCellDirtyStateChanged + CellValueChanged）。
-        _displayRows.ListChanged += (_, e) =>
-        {
-            if (e.ListChangedType == ListChangedType.ItemChanged)
-            {
-                MarkDirty();
-            }
-        };
-
-        // 双击行编辑（XAML MouseDoubleClick）。
-        // 右键行选择 + 右键菜单（XAML ContextMenu / PreviewMouseRightButtonDown）。
+        // 表格只读；修改走双击/右键编辑。删除、导入仍会标记未保存。
 
         Closing += OnFormClosing;
         Activated += (_, _) => RefreshPresentBlocks();
@@ -67,46 +55,14 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
     {
         _grid.Columns.Clear();
 
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.BlockName), "块名", 190, numeric: false));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.CreatedAt), "加入时间", 170, numeric: false, readOnly: true));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PaperName), "图幅", 80, numeric: false));
+        // 仅展示摘要列；边界/图名/图号等坐标明细在编辑对话框中查看，避免中间一长串不可用列。
+        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.BlockName), "块名", 190));
+        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.CreatedAt), "加入时间", 170));
+        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PaperName), "图幅", 80));
         _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PaperWidthMm), "纸宽mm", 90));
         _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PaperHeightMm), "纸高mm", 90));
         _grid.Columns.Add(MakeCheckColumn(nameof(TitleBlockRow.HasPrintRegion), "有打印边界", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PrintMinX), "边界MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PrintMinY), "边界MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PrintMaxX), "边界MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PrintMaxY), "边界MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.TitleMinX), "图名MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.TitleMinY), "图名MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.TitleMaxX), "图名MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.TitleMaxY), "图名MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.NumberMinX), "图号MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.NumberMinY), "图号MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.NumberMaxX), "图号MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.NumberMaxY), "图号MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.DateMinX), "日期MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.DateMinY), "日期MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.DateMaxX), "日期MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.DateMaxY), "日期MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.RevisionMinX), "版次MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.RevisionMinY), "版次MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.RevisionMaxX), "版次MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.RevisionMaxY), "版次MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PhaseMinX), "设计阶段MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PhaseMinY), "设计阶段MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PhaseMaxX), "设计阶段MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.PhaseMaxY), "设计阶段MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info1MinX), "信息1MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info1MinY), "信息1MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info1MaxX), "信息1MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info1MaxY), "信息1MaxY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info2MinX), "信息2MinX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info2MinY), "信息2MinY", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info2MaxX), "信息2MaxX", 96));
-        _grid.Columns.Add(MakeTextColumn(nameof(TitleBlockRow.Info2MaxY), "信息2MaxY", 96));
 
-        // 最后一列对应原 AutoSizeMode = Fill。
         var updatedAt = new DataGridTextColumn
         {
             Header = "更新时间",
@@ -119,29 +75,22 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
 
         foreach (var column in _grid.Columns)
         {
-            // 原 SortMode = Programmatic：排序由表头点击事件手工处理。
             column.CanUserSort = true;
-            column.SortMemberPath = ((Binding)((DataGridBoundColumn)column).Binding).Path.Path;
+            column.IsReadOnly = true;
+            if (column is DataGridBoundColumn bound)
+            {
+                column.SortMemberPath = ((Binding)bound.Binding).Path.Path;
+            }
         }
     }
 
-    private static DataGridTextColumn MakeTextColumn(string propertyName, string header, double width, bool numeric = true, bool readOnly = false)
+    private static DataGridTextColumn MakeTextColumn(string propertyName, string header, double width)
     {
-        var binding = new Binding(propertyName)
-        {
-            Mode = readOnly ? BindingMode.OneWay : BindingMode.TwoWay,
-            UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-        };
-        if (!readOnly && numeric)
-        {
-            binding.ValidationRules.Add(new DoubleValidationRule());
-        }
-
         return new DataGridTextColumn
         {
             Header = header,
-            Binding = binding,
-            IsReadOnly = readOnly,
+            Binding = new Binding(propertyName) { Mode = BindingMode.OneWay },
+            IsReadOnly = true,
             Width = width
         };
     }
@@ -151,11 +100,8 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
         return new DataGridCheckBoxColumn
         {
             Header = header,
-            Binding = new Binding(propertyName)
-            {
-                Mode = BindingMode.TwoWay,
-                UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged
-            },
+            Binding = new Binding(propertyName) { Mode = BindingMode.OneWay },
+            IsReadOnly = true,
             Width = width
         };
     }
@@ -314,11 +260,11 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
             return;
         }
 
-        // 表格内若已有手工修改，先明确保存，避免编辑窗口从磁盘回读到另一份旧配置。
+        // 表格只读，改字段走双击/右键编辑对话框；删除或导入后仍可保存。
         if (_dirty)
         {
             var saveFirst = System.Windows.MessageBox.Show(
-                "当前有未保存的表格修改。编辑图框前需要先保存，是否继续？",
+                "当前有未保存的修改。编辑图框前需要先保存，是否继续？",
                 Title,
                 MessageBoxButton.OKCancel,
                 MessageBoxImage.Question);
@@ -661,25 +607,6 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
         _grid.CommitEdit(DataGridEditingUnit.Row, true);
     }
 
-    private void GridValidationError(object sender, ValidationErrorEventArgs e)
-    {
-        if (_showingValidationError)
-        {
-            return;
-        }
-
-        _showingValidationError = true;
-        try
-        {
-            // 等价原 DataError 提示。
-            System.Windows.MessageBox.Show(this, "输入值格式不正确，请输入有效的数字。", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _showingValidationError = false;
-        }
-    }
-
     private void OnFormClosing(object? sender, CancelEventArgs e)
     {
         if (!_dirty)
@@ -741,24 +668,6 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
-
-    /// <summary>数值列输入校验（等价原 DataGridView DataError 提示）。</summary>
-    private sealed class DoubleValidationRule : ValidationRule
-    {
-        public override ValidationResult Validate(object value, CultureInfo cultureInfo)
-        {
-            var text = value as string;
-            if (string.IsNullOrEmpty(text))
-            {
-                // 空值交给业务校验（HasFiniteNumbers / 块名为空等）处理。
-                return ValidationResult.ValidResult;
-            }
-
-            return double.TryParse(text, NumberStyles.Float, cultureInfo, out _)
-                ? ValidationResult.ValidResult
-                : new ValidationResult(false, "输入值格式不正确，请输入有效的数字。");
-        }
-    }
 
     private sealed class TitleBlockRow : INotifyPropertyChanged
     {

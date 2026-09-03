@@ -2,13 +2,14 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Forms;
 using System.Windows.Interop;
 
 namespace ZwcadBatchPlot;
 
 /// <summary>
-/// CAD 内嵌 WPF 窗口隐藏后，Windows 可能把前台焦点交给其他进程。
-/// 所有需要回到图面取点的流程统一通过本类把焦点交还当前 CAD 主窗口。
+/// CAD 内嵌窗口隐藏后，Windows 可能把前台焦点交给其他进程。
+/// WinForms 录入窗与 WPF 其它面板共用同一套 Hide/Restore 语义（与 main 分支一致）。
 /// </summary>
 internal static class CadWindowFocus
 {
@@ -56,27 +57,43 @@ internal static class CadWindowFocus
         }
     }
 
-    /// <summary>隐藏插件窗口并立即把输入焦点交给 CAD，避免焦点落到其他程序。</summary>
+    /// <summary>隐藏 WinForms 插件窗并立即把输入焦点交给 CAD。</summary>
+    public static void HideForCadInput(Form form)
+    {
+        form.Hide();
+        ActivateCadWindow();
+        System.Windows.Forms.Application.DoEvents();
+        ActivateCadWindow();
+    }
+
+    /// <summary>隐藏 WPF 插件窗并立即把输入焦点交给 CAD。</summary>
     public static void HideForCadInput(Window window)
     {
         window.Hide();
         ActivateCadWindow();
-        System.Windows.Application.Current?.Dispatcher.Invoke(
-            System.Windows.Threading.DispatcherPriority.Background, () => { });
-        // 处理完挂起消息后再次确认 CAD 位于前台。
+        System.Windows.Forms.Application.DoEvents();
         ActivateCadWindow();
     }
 
-    /// <summary>CAD 取点结束后恢复原窗口并置顶，保持原有模态窗口链。</summary>
+    /// <summary>CAD 取点结束后恢复 WinForms 窗体。</summary>
+    public static void RestoreDialog(Form form)
+    {
+        ActivateCadWindow();
+        form.Visible = true;
+        form.BringToFront();
+        form.Activate();
+    }
+
+    /// <summary>CAD 取点结束后恢复 WPF 窗体。</summary>
     public static void RestoreDialog(Window window)
     {
         ActivateCadWindow();
         window.Visibility = Visibility.Visible;
-        window.BringToFront();
+        window.BringToFrontHwnd();
         window.Activate();
     }
 
-    private static void BringToFront(this Window window)
+    private static void BringToFrontHwnd(this Window window)
     {
         try
         {

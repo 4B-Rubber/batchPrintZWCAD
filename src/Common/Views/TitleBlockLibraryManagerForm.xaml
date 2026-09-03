@@ -54,12 +54,12 @@
         <DataGrid x:Name="_grid"
                   Style="{StaticResource PluginGridStyle}"
                   Margin="0"
+                  IsReadOnly="True"
                   Sorting="GridSorting"
                   LoadingRow="GridLoadingRow"
                   MouseDoubleClick="GridMouseDoubleClick"
                   ContextMenuOpening="GridContextMenuOpening"
-                  PreviewMouseRightButtonDown="GridPreviewMouseRightButtonDown"
-                  Validation.Error="GridValidationError">
+                  PreviewMouseRightButtonDown="GridPreviewMouseRightButtonDown">
             <DataGrid.RowStyle>
                 <Style TargetType="DataGridRow">
                     <Style.Triggers>

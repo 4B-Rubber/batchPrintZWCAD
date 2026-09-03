@@ -300,17 +300,10 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         _batchPlotForm = form;
         form.Closed += (_, _) =>
         {
-            if (!form.HasPendingPrint)
-            {
-                return;
-            }
-
             if (ReferenceEquals(_batchPlotForm, form))
             {
                 _batchPlotForm = null;
             }
-
-            form.ExecutePendingPrint();
         };
 
         ShowModelessDialog(form);
@@ -366,6 +359,18 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         {
             // PDF 已成功生成；资源管理器打开失败不应把打印标记为失败
         }
+    }
+
+    private static System.Windows.Forms.DialogResult ShowModalDialog(System.Windows.Forms.Form form)
+    {
+#if ACAD_CORE
+        var result = form.ShowDialog();
+#else
+        var result = CadApp.ShowModalDialog(form);
+#endif
+        // 顶层 WinForms 模态结束后交还 CAD 焦点，与 CadDialog WPF 路径一致。
+        CadWindowFocus.ActivateCadWindow();
+        return result;
     }
 
     private static bool? ShowModalDialog(Window window)

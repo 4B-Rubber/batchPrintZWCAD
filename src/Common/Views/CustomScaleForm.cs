@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Windows;
-using System.Windows.Media;
+using System.Drawing;
+using System.Windows.Forms;
 
 namespace ZwcadBatchPlot;
 
@@ -13,7 +13,7 @@ namespace ZwcadBatchPlot;
 /// （支持小数，如 143 / 1:143 / 0.25 表示 4:1）。
 /// 比例语义：图面尺寸 / 比例 = 纸张毫米尺寸。自定义尺寸路径仅用于缩小场景，比例必须 ≥ 1。
 /// </summary>
-public sealed partial class CustomScaleForm : Window
+public sealed class CustomScaleForm : Form
 {
     // 换算后纸张短边的常规范围（mm），与 PaperSizeDetector.GuessScale 的判断范围一致。
     private const double PaperShortSideMinMm = 100d;
@@ -23,9 +23,10 @@ public sealed partial class CustomScaleForm : Window
     public const string AspectRatioHintText =
         "该图幅长宽比接近标准纸张或加长图，但比例不在常用列表中。请选择目标图幅，比例将按实际尺寸自动计算；也可选自定义尺寸后手动输入比例。";
 
-    private static readonly Color PaperInfoColor = Color.FromRgb(0, 120, 212);
-    private static readonly Color PaperWarnColor = Colors.OrangeRed;
-
+    private readonly TextBox _scaleInput = new();
+    private readonly Label _scalePrefixLabel;
+    private readonly Label _paperSizeLabel;
+    private readonly ComboBox? _paperCombo;
     private readonly IReadOnlyList<PaperDetection> _aspectPapers;
     private readonly double _drawingWidth;
     private readonly double _drawingHeight;
@@ -59,35 +60,100 @@ public sealed partial class CustomScaleForm : Window
             : new PaperDetection[0];
         var hasAspectPapers = _aspectPapers.Count > 0;
 
-        InitializeComponent();
+        Text = "自定义打印比例";
+        UiLayout.ConfigureForm(this, 420, hasAspectPapers ? 220 : 180, 360, hasAspectPapers ? 200 : 170);
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        ShowInTaskbar = false;
+        ClientSize = new Size(UiLayout.Scale(420), UiLayout.Scale(hasAspectPapers ? 230 : 190));
 
-        _info.Text = hasAspectPapers
-            ? $"图纸尺寸: {drawingWidth:0.##} x {drawingHeight:0.##} mm（长宽比接近标准纸张或加长图，比例不在常用列表）"
-            : $"图纸尺寸: {drawingWidth:0.##} x {drawingHeight:0.##} mm（未匹配到 A0-A4 标准纸张）";
-
-        _scaleInput.Text = _customScaleText;
-
-        _hint.Text = hasAspectPapers
-            ? AspectRatioHintText
-            : (string.IsNullOrWhiteSpace(hintText) ? "" : hintText);
-
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = hasAspectPapers ? 7 : 6,
+            Padding = new Padding(UiLayout.Scale(12), UiLayout.Scale(8), UiLayout.Scale(12), UiLayout.Scale(8))
+        };
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(22)));
         if (hasAspectPapers)
         {
-            _paperChoicePanel.Visibility = Visibility.Visible;
-            _paperChoiceRow.Height = new GridLength(30);
-            Height = 220;
-            MinHeight = 200;
-            CreatePaperComboItems();
-        }
-        else
-        {
-            _paperChoicePanel.Visibility = Visibility.Collapsed;
-            _paperChoiceRow.Height = new GridLength(0);
-            Height = 180;
-            MinHeight = 170;
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(30)));
         }
 
-        if (_paperCombo.Items.Count > 0)
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(26)));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(30)));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(14)));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(32)));
+
+        var info = new Label
+        {
+            Text = hasAspectPapers
+                ? $"图纸尺寸: {drawingWidth:0.##} x {drawingHeight:0.##} mm（长宽比接近标准纸张或加长图，比例不在常用列表）"
+                : $"图纸尺寸: {drawingWidth:0.##} x {drawingHeight:0.##} mm（未匹配到 A0-A4 标准纸张）",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.DimGray
+        };
+
+        // 输入框只放比例数字部分（如 100 表示 1:100），"1 :" 前缀由标签固定显示；
+        // 选中标准图幅时改为只读显示完整比例文本。用户也可直接粘贴 "1:143" 完整写法。
+        var scaleLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = Padding.Empty };
+        _scalePrefixLabel = new Label { Text = "打印比例  1 : ", AutoSize = true, TextAlign = ContentAlignment.MiddleLeft };
+        _scaleInput.Width = UiLayout.Scale(160);
+        _scaleInput.Text = _customScaleText;
+        _scaleInput.TextChanged += (_, _) => UpdatePaperSize();
+        scaleLayout.Controls.Add(_scalePrefixLabel);
+        scaleLayout.Controls.Add(_scaleInput);
+
+        _paperSizeLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.FromArgb(0, 120, 212)
+        };
+
+        var hint = new Label
+        {
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.DimGray,
+            Text = hasAspectPapers
+                ? AspectRatioHintText
+                : (string.IsNullOrWhiteSpace(hintText) ? "" : hintText)
+        };
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(0, UiLayout.Scale(6), 0, 0)
+        };
+        var ok = UiLayout.CreateButton("确定", 76);
+        var cancel = UiLayout.CreateButton("取消", 76);
+        ok.Click += (_, _) => Confirm();
+        cancel.DialogResult = DialogResult.Cancel;
+        buttons.Controls.Add(ok);
+        buttons.Controls.Add(cancel);
+
+        var row = 0;
+        panel.Controls.Add(info, 0, row++);
+        if (hasAspectPapers)
+        {
+            _paperCombo = CreatePaperCombo();
+            panel.Controls.Add(CreatePaperChoiceRow(_paperCombo), 0, row++);
+        }
+
+        panel.Controls.Add(scaleLayout, 0, row++);
+        panel.Controls.Add(_paperSizeLabel, 0, row++);
+        panel.Controls.Add(hint, 0, row++);
+        panel.Controls.Add(new Label(), 0, row++);
+        panel.Controls.Add(buttons, 0, row);
+        Controls.Add(panel);
+
+        AcceptButton = ok;
+        CancelButton = cancel;
+
+        if (_paperCombo != null)
         {
             ApplyPaperChoice();
         }
@@ -98,34 +164,40 @@ public sealed partial class CustomScaleForm : Window
     }
 
     /// <summary>目标图幅下拉：标准图幅候选项 + 末尾的自定义尺寸。</summary>
-    private void CreatePaperComboItems()
+    private ComboBox CreatePaperCombo()
     {
+        var combo = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = UiLayout.Scale(300),
+            Anchor = AnchorStyles.Left
+        };
         foreach (var paper in _aspectPapers)
         {
-            _paperCombo.Items.Add(new PaperChoiceItem(PaperSizeDetector.FormatOption(paper), paper));
+            combo.Items.Add(new PaperChoiceItem(PaperSizeDetector.FormatOption(paper), paper));
         }
 
-        _paperCombo.Items.Add(new PaperChoiceItem("自定义尺寸 | 手动输入比例", null));
+        combo.Items.Add(new PaperChoiceItem("自定义尺寸 | 手动输入比例", null));
         var preferred = PaperSizeDetector.IndexOfPreferredAspectRatioPaper(
             _drawingWidth,
             _drawingHeight,
             _aspectPapers);
-        _paperCombo.SelectedIndex = preferred >= 0 ? preferred : _paperCombo.Items.Count - 1;
+        combo.SelectedIndex = preferred >= 0 ? preferred : combo.Items.Count - 1;
+        combo.SelectedIndexChanged += (_, _) => ApplyPaperChoice();
+        return combo;
     }
 
-    private void PaperCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private static Control CreatePaperChoiceRow(ComboBox combo)
     {
-        ApplyPaperChoice();
-    }
-
-    private void ScaleInput_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-    {
-        UpdatePaperSize();
-    }
-
-    private void Ok_Click(object sender, RoutedEventArgs e)
-    {
-        Confirm();
+        var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = Padding.Empty };
+        layout.Controls.Add(new Label
+        {
+            Text = "目标图幅  ",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        });
+        layout.Controls.Add(combo);
+        return layout;
     }
 
     /// <summary>
@@ -137,19 +209,19 @@ public sealed partial class CustomScaleForm : Window
         if (standard == null)
         {
             _scalePrefixLabel.Text = "打印比例  1 : ";
-            _scaleInput.IsReadOnly = false;
+            _scaleInput.ReadOnly = false;
             _scaleInput.Text = _customScaleText;
             UpdatePaperSize();
             return;
         }
 
-        if (!_scaleInput.IsReadOnly)
+        if (!_scaleInput.ReadOnly)
         {
             _customScaleText = _scaleInput.Text;
         }
 
         _scalePrefixLabel.Text = "打印比例  ";
-        _scaleInput.IsReadOnly = true;
+        _scaleInput.ReadOnly = true;
         _scaleInput.Text = standard.ScaleText;
         ShowStandardPaperSize(standard);
     }
@@ -167,7 +239,6 @@ public sealed partial class CustomScaleForm : Window
         if (!PaperSizeDetector.TryParseScale(_scaleInput.Text, out var scale) || scale < 1)
         {
             _paperSizeLabel.Text = "请输入 ≥1 的比例数字，例如 100";
-            _paperSizeLabel.Foreground = new SolidColorBrush(PaperInfoColor);
             return;
         }
 
@@ -178,18 +249,18 @@ public sealed partial class CustomScaleForm : Window
             ? ""
             : "（超出常规 A4~A0 范围，可能造成超大或过小页面）";
         _paperSizeLabel.Text = $"打印纸张: {pw:0.##} x {ph:0.##} mm（自定义尺寸）{rangeText}";
-        _paperSizeLabel.Foreground = new SolidColorBrush(rangeText.Length == 0 ? PaperInfoColor : PaperWarnColor);
+        _paperSizeLabel.ForeColor = rangeText.Length == 0 ? Color.FromArgb(0, 120, 212) : Color.OrangeRed;
     }
 
     private void ShowStandardPaperSize(PaperDetection paper)
     {
         _paperSizeLabel.Text = $"打印纸张: {paper.PaperWidthMm:0.##} x {paper.PaperHeightMm:0.##} mm（{paper.PaperName}）";
-        _paperSizeLabel.Foreground = new SolidColorBrush(PaperInfoColor);
+        _paperSizeLabel.ForeColor = Color.FromArgb(0, 120, 212);
     }
 
     private PaperDetection? GetSelectedChoicePaper()
     {
-        return _paperCombo.SelectedItem is PaperChoiceItem item ? item.Paper : null;
+        return _paperCombo?.SelectedItem is PaperChoiceItem item ? item.Paper : null;
     }
 
     private void Confirm()
@@ -199,7 +270,7 @@ public sealed partial class CustomScaleForm : Window
         {
             SelectedStandardPaper = standard;
             SelectedScale = standard.ScaleValue;
-            DialogResult = true;
+            DialogResult = DialogResult.OK;
             Close();
             return;
         }
@@ -208,9 +279,9 @@ public sealed partial class CustomScaleForm : Window
         {
             MessageBox.Show(
                 "无法识别比例输入。请直接输入数字（100 表示 1:100），也支持 1:143 形式；比例必须大于等于 1。",
-                Title,
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                Text,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
             return;
         }
 
@@ -223,10 +294,10 @@ public sealed partial class CustomScaleForm : Window
             var confirm = MessageBox.Show(
                 $"按 {PaperSizeDetector.ToScaleText(scale)} 换算的纸张为 {paperWidthMm:0.##} x {paperHeightMm:0.##} mm，"
                 + "超出常规 A4~A0 图纸范围（短边 100~900mm），打印可能出现超大或过小页面。是否仍要使用该比例？",
-                Title,
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-            if (confirm != MessageBoxResult.Yes)
+                Text,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes)
             {
                 _scaleInput.Focus();
                 _scaleInput.SelectAll();
@@ -236,7 +307,7 @@ public sealed partial class CustomScaleForm : Window
 
         SelectedStandardPaper = null;
         SelectedScale = scale;
-        DialogResult = true;
+        DialogResult = DialogResult.OK;
         Close();
     }
 

@@ -180,7 +180,8 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="文件名" Binding="{Binding FileName}"
-                                    Width="*" MinWidth="170" />
+                                    Width="*" MinWidth="170" IsReadOnly="True"
+                                    SortMemberPath="FileName" />
                 <DataGridTemplateColumn Header="纸张尺寸 / 比例" Width="*" MinWidth="200" SortMemberPath="PaperChoice">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
@@ -191,8 +192,6 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="比例" Binding="{Binding Scale}"
-                                    Width="86" IsReadOnly="True" SortMemberPath="Scale" />
             </DataGrid.Columns>
             <DataGrid.ContextMenu>
                 <ContextMenu>

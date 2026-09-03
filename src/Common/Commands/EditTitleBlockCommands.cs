@@ -156,7 +156,7 @@ public sealed partial class BatchPlotCommands
 
             editor.WriteMessage($"\n已定位图框 {existing.BlockName}，红色临时框显示当前已配置字段，可点击对应‘框选’修改。");
             CadWindowFocus.ActivateCadWindow();
-            if (ShowModalDialog(dialog) != true)
+            if (ShowModalDialog(dialog) != System.Windows.Forms.DialogResult.OK)
             {
                 return false;
             }

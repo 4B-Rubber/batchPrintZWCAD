@@ -112,8 +112,8 @@ public sealed partial class BatchPlotCommands
                 isArbitraryPaper = true;
                 // 推测比例，弹出自定义比例对话框
                 var guessedScale = PaperSizeDetector.GuessScale(width, height);
-                var scaleForm = new CustomScaleForm(width, height, guessedScale);
-                if (CadDialog.ShowModal(scaleForm) != true)
+                using var scaleForm = new CustomScaleForm(width, height, guessedScale);
+                if (ShowModalDialog(scaleForm) != System.Windows.Forms.DialogResult.OK)
                 {
                     return;
                 }

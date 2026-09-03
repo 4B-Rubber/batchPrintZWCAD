@@ -70,8 +70,6 @@ public sealed partial class BatchPlotForm : Window
     /// <summary>原 _plotOnlyControls：非 DWG 输出格式时才启用。</summary>
     private readonly UIElement[] _plotOnlyControls = default!;
 
-    public bool HasPendingPrint { get; private set; }
-
     public BatchPlotForm(Document currentDocument)
     {
         _currentDocument = currentDocument;
@@ -102,12 +100,10 @@ public sealed partial class BatchPlotForm : Window
 
         Closing += (_, _) =>
         {
-            if (!HasPendingPrint)
-            {
-                _renumberDialog?.Close();
-                ClearSequenceOverlay(repaint: false);
-            }
-
+            // 关闭时若仍在打印，先请求取消，避免后台继续跑。
+            _printCts?.Cancel();
+            _renumberDialog?.Close();
+            ClearSequenceOverlay(repaint: false);
             SaveCurrentSettings();
         };
         Closed += (_, _) =>
@@ -1815,9 +1811,8 @@ public sealed partial class BatchPlotForm : Window
             Directory.CreateDirectory(directory!);
         }
         ApplyLeaveMarginSelection(selected);
-        HasPendingPrint = true;
-        // 非模态窗口不能设置 DialogResult（WPF 会抛异常），由调用方在 Closed 后检查 HasPendingPrint。
-        Close();
+        // 打印期间保持窗口可见，显示进度并允许点「停止」（与通用型批打一致）。
+        ExecutePendingPrint();
     }
 
     private void PrintOrStop()
@@ -1974,14 +1969,14 @@ public sealed partial class BatchPlotForm : Window
         SortAndRefreshOutputPaths();
     }
 
-    public void ExecutePendingPrint()
+    private void ExecutePendingPrint()
     {
-        if (!HasPendingPrint)
+        var selected = _jobs.Where(x => x.Selected).ToList();
+        if (selected.Count == 0)
         {
             return;
         }
 
-        var selected = _jobs.Where(x => x.Selected).ToList();
         var device = SelectedPlotDevice;
         var style = _styleCombo.SelectedItem?.ToString() ?? "";
         var mergePdf = !string.IsNullOrWhiteSpace(_mergedOutputPath);
@@ -1998,6 +1993,7 @@ public sealed partial class BatchPlotForm : Window
         _printButton.Background = new SolidColorBrush(Color.FromRgb(200, 40, 40));
         _printButton.BorderBrush = new SolidColorBrush(Color.FromRgb(160, 30, 30));
         _printButton.IsEnabled = true;
+        Activate();
 
         void PumpMessages()
         {
