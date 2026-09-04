@@ -92,7 +92,7 @@ public sealed class AppSettings
     public bool AddFileNameSequence { get; set; }
     public bool LeavePaperMargin { get; set; }
     public double PaperMarginMm { get; set; } = 1;
-    /// <summary>图框块批量打印的主排序依据；矩形框批量打印不读取此设置。</summary>
+    /// <summary>图框块批量打印的主排序依据；通用型批量打印不读取此设置。</summary>
     public TitleBlockSortMode TitleBlockBatchSortMode { get; set; } = TitleBlockSortMode.DrawingNumber;
     /// <summary>图框库批量打印空间排序方向：true=从左到右从上到下，false=从上到下从左到右。</summary>
     public bool SortOrderHorizontalFirst { get; set; }

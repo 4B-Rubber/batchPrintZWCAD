@@ -309,7 +309,7 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         ShowModelessDialog(form);
     }
 
-    // ---- 矩形框批量打印 ----
+    // ---- 通用型批量打印 ----
 
     private static void ShowRectangleBatchPlotCore()
     {
@@ -384,30 +384,37 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
     }
 
     /// <summary>
-    /// 共享的"选择扫描范围"对话框，供图框块打印和矩形框打印共用。
+    /// 共享的"选择扫描范围"对话框，供图框块打印和通用型批量打印共用。
+    /// <paramref name="owner"/> 应为批打主窗，关闭后焦点回到批打界面（对齐 main 的 ShowDialog(owner)）。
     /// </summary>
-    internal static TitleBlockScanScope? PromptScanScope()
+    internal static TitleBlockScanScope? PromptScanScope(Window? owner = null)
     {
+        // main 用 ClientSize 360x220；WPF 的 Height 含标题栏，固定 220 会裁掉底部按钮。
         var dialog = new Window
         {
             Title = "扫描当前图",
-            Width = 360,
-            Height = 220,
+            Width = 380,
+            MinWidth = 360,
+            Height = 300,
+            MinHeight = 280,
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            WindowStartupLocation = owner != null
+                ? WindowStartupLocation.CenterOwner
+                : WindowStartupLocation.CenterScreen,
             WindowStyle = WindowStyle.ToolWindow,
             FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI"),
             FontSize = 11
         };
 
-        var panel = new Grid { Margin = new Thickness(16, 12, 16, 12) };
+        var panel = new Grid { Margin = new Thickness(16, 12, 16, 16) };
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(28) });
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
         panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // 按钮行按内容高度，避免 * 行在矮窗里把确定/取消挤出可视区。
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         void AddToGrid(System.Windows.UIElement element, int row)
         {
@@ -428,10 +435,10 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 10, 0, 0)
+            Margin = new Thickness(0, 12, 0, 0)
         };
-        var ok = new Button { Content = "确定", MinWidth = 76, MinHeight = 22, IsDefault = true };
-        var cancel = new Button { Content = "取消", MinWidth = 76, MinHeight = 22, IsCancel = true };
+        var ok = new Button { Content = "确定", MinWidth = 76, MinHeight = 26, IsDefault = true, Margin = new Thickness(8, 0, 0, 0) };
+        var cancel = new Button { Content = "取消", MinWidth = 76, MinHeight = 26, IsCancel = true };
         ok.Click += (_, _) =>
         {
             dialog.DialogResult = true;
@@ -453,7 +460,14 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         AddToGrid(buttons, 5);
         dialog.Content = panel;
 
-        if (CadDialog.ShowModal(dialog) != true) return null;
+        // 嵌套属主弹窗：关闭后焦点回到批打窗，不会像顶层模态那样 ActivateCadWindow。
+        var result = CadDialog.ShowModal(dialog, owner);
+        owner?.Activate();
+        if (result != true)
+        {
+            return null;
+        }
+
         if (all.IsChecked == true) return TitleBlockScanScope.AllSpaces;
         if (layouts.IsChecked == true) return TitleBlockScanScope.PaperLayouts;
         if (current.IsChecked == true) return TitleBlockScanScope.CurrentSpace;

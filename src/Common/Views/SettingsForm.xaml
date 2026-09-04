@@ -372,7 +372,7 @@
                         <StackPanel>
                             <TextBlock Text="比例识别作用范围" FontWeight="Bold" Foreground="#1C4E79" Margin="0,0,0,4" />
                             <TextBlock Foreground="#374C5E" TextTrimming="CharacterEllipsis"
-                                       Text="图框块：按录入纸张短边自动识别任意比例    ·    矩形框：仅识别下方内置及自定义比例" />
+                                       Text="图框块：按录入纸张短边自动识别任意比例    ·    通用型：仅识别下方内置及自定义比例" />
                         </StackPanel>
                     </Border>
 
@@ -382,7 +382,7 @@
                             <ColumnDefinition Width="44*" />
                         </Grid.ColumnDefinitions>
 
-                        <GroupBox Grid.Column="0" Header="矩形框可识别比例" Padding="8" Margin="0,0,5,0">
+                        <GroupBox Grid.Column="0" Header="通用型可识别比例" Padding="8" Margin="0,0,5,0">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="*" />

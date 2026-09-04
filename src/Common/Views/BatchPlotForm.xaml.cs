@@ -226,7 +226,7 @@ public sealed partial class BatchPlotForm : Window
 
     // ── 扫描 ──
 
-    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope();
+    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
 
     private void ScanCurrentDrawing()
     {
@@ -252,7 +252,7 @@ public sealed partial class BatchPlotForm : Window
             scope.Value,
             _settings.PaperMatchToleranceMm);
 
-        // 扫描结果坐标是 WCS，转为 DCS 后打印（和矩形框批量打印同理）
+        // 扫描结果坐标是 WCS，转为 DCS 后打印（和通用型批量打印同理）
         TransformScannedJobsToDcs(scannedJobs);
         SortAndRefreshOutputPaths(scannedJobs);
         ScheduleSequenceOverlayForCurrentJobs();
@@ -312,7 +312,7 @@ public sealed partial class BatchPlotForm : Window
         }
     }
 
-    /// <summary>扫描得到的 Job 坐标是 WCS，转换为 DCS 后打印（和矩形框批量打印同理）。</summary>
+    /// <summary>扫描得到的 Job 坐标是 WCS，转换为 DCS 后打印（和通用型批量打印同理）。</summary>
     private void TransformScannedJobsToDcs(List<PlotJob> jobs)
     {
         try
@@ -359,7 +359,7 @@ public sealed partial class BatchPlotForm : Window
                 job.MaxX = pts.Max(p => p.X);
                 job.MaxY = pts.Max(p => p.Y);
                 job.IsDcsWindow = true;
-                // 阻止 PlotterService 重新扫描 DWG 刷新坐标（和矩形框批量打印同理）
+                // 阻止 PlotterService 重新扫描 DWG 刷新坐标（和通用型批量打印同理）
                 job.IsManualWindow = true;
             }
         }
@@ -739,7 +739,7 @@ public sealed partial class BatchPlotForm : Window
         RefreshSelectedOverlay();
     }
 
-    // 图框块界面取消“打印”即表示从当前清单移除，避免列表编号和 CAD 红框编号不一致（与矩形框批量打印同理）。
+    // 图框块界面取消“打印”即表示从当前清单移除，避免列表编号和 CAD 红框编号不一致（与通用型批量打印同理）。
     private void RemoveUnselectedJobs()
     {
         var removed = _jobs.Where(job => !job.Selected).ToList();

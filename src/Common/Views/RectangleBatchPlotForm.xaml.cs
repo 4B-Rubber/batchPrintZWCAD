@@ -30,7 +30,7 @@ using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
 namespace ZwcadBatchPlot;
 
 /// <summary>
-/// 矩形框批量打印面板（WPF 版，非模态窗口；由 BatchPlotCommands 通过 CadDialog.ShowModeless 显示）。
+/// 通用型批量打印面板（WPF 版，非模态窗口；由 BatchPlotCommands 通过 CadDialog.ShowModeless 显示）。
 /// </summary>
 public sealed partial class RectangleBatchPlotForm : Window
 {
@@ -232,6 +232,8 @@ public sealed partial class RectangleBatchPlotForm : Window
     private void PrintOrStop_Click(object sender, RoutedEventArgs e) => PrintOrStop();
 
     private void SortSettings_Click(object sender, RoutedEventArgs e) => ShowSortSettings();
+
+    private void ScaleSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsAtTab(3);
 
     private void GeneralSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsAtTab(0);
 
@@ -540,7 +542,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
     }
 
-    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope();
+    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
 
     private void ScanCurrentDrawing()
     {
@@ -1022,7 +1024,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
         AppendPrintLog(
             "INFO",
-            $"开始矩形框批量打印；共={selected.Count}；格式={SelectedOutputFormat}；设备={device}；打印样式={SelectedStyle()}");
+            $"开始通用型批量打印；共={selected.Count}；格式={SelectedOutputFormat}；设备={device}；打印样式={SelectedStyle()}");
         try
         {
             // 切换按钮为"停止"状态
@@ -1115,7 +1117,7 @@ public sealed partial class RectangleBatchPlotForm : Window
                 RevealOutput(null, directory);
             }
             _status.Text = $"完成，共 {selected.Count} 张";
-            AppendPrintLog("INFO", $"矩形框批量打印完成；成功={selected.Count}；失败=0");
+            AppendPrintLog("INFO", $"通用型批量打印完成；成功={selected.Count}；失败=0");
             var printLogPath = SavePrintLog();
             var printLogText = BuildLogText(printLogPath);
             MessageBox.Show(
@@ -1136,9 +1138,9 @@ public sealed partial class RectangleBatchPlotForm : Window
         catch (Exception ex)
         {
             _status.Text = "打印失败";
-            AppendPrintLog("ERROR", "矩形框批量打印失败: " + ex);
+            AppendPrintLog("ERROR", "通用型批量打印失败: " + ex);
             var printLogPath = SavePrintLog();
-            MessageBox.Show("矩形框批量打印失败: " + ex.Message + BuildLogText(printLogPath), Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("通用型批量打印失败: " + ex.Message + BuildLogText(printLogPath), Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1179,7 +1181,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
         var confirm = MessageBox.Show(
             $"将按当前矩形框拆出 {selected.Count} 个 DWG 文件。\n\n输出位置：{directory}\n\n是否继续？",
-            "矩形框批量拆图",
+            "通用型批量拆图",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Question);
         if (confirm != MessageBoxResult.OK)
@@ -1225,7 +1227,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         catch (Exception ex)
         {
             _status.Text = "拆图失败";
-            MessageBox.Show("矩形框批量拆图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("通用型批量拆图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1733,9 +1735,11 @@ public sealed partial class RectangleBatchPlotForm : Window
             var recognitionSettingsChanged =
                 Math.Abs(_settings.PaperMatchToleranceMm - updated.PaperMatchToleranceMm) > 1e-9
                 || _settings.RecognizeFourLineRectangleFrames
-                != updated.RecognizeFourLineRectangleFrames;
+                != updated.RecognizeFourLineRectangleFrames
+                || !ScalesEqual(_settings.CustomScales, updated.CustomScales);
             _settings.PaperMatchToleranceMm = updated.PaperMatchToleranceMm;
             _settings.RecognizeFourLineRectangleFrames = updated.RecognizeFourLineRectangleFrames;
+            _settings.CustomScales = updated.CustomScales;
             _settings.HideFrameBoundaryWhenPlotting = updated.HideFrameBoundaryWhenPlotting;
             _settings.PlotTransparency = updated.PlotTransparency;
             _settings.GeneratePrintLog = updated.GeneratePrintLog;
@@ -1811,6 +1815,25 @@ public sealed partial class RectangleBatchPlotForm : Window
     {
         // 等价原 WinForms Application.DoEvents：在打印循环里刷新界面。
         Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.Background, new Action(() => { }));
+    }
+
+    /// <summary>比较自定义比例列表是否一致，用于判断是否需要重扫。</summary>
+    private static bool ScalesEqual(IReadOnlyList<double> left, IReadOnlyList<double> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (Math.Abs(left[i] - right[i]) > 1e-9)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static Document? GetActiveCadDocument()

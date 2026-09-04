@@ -6,7 +6,7 @@ namespace ZwcadBatchPlot;
 
 /// <summary>
 /// 图纸空间排序工具 — 用锚点带状分组 + 矩形边沿重叠判断实现行列排序，
-/// 图框块和矩形框批量打印共用同一算法，保证排序结果一致。
+/// 图框块和通用型批量打印共用同一算法，保证排序结果一致。
 /// </summary>
 public static class SpatialSorter
 {

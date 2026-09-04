@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:ZwcadBatchPlot"
         x:Class="ZwcadBatchPlot.RectangleBatchPlotForm"
-        Title="LA矩形框批量打印 V1.15.6.4"
+        Title="LA通用型批量打印 V1.15.6.4"
         Width="900" Height="520"
         MinWidth="720" MinHeight="460"
         WindowStartupLocation="CenterScreen"
@@ -30,10 +30,14 @@
 
         <!-- 底部快捷设置栏 -->
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="8,3,0,3">
+            <Button x:Name="_scaleSettingsBtn" Content="比例设置" MinWidth="76"
+                    Style="{StaticResource PluginButtonStyle}" Margin="0,0,4,0"
+                    Click="ScaleSettings_Click"
+                    ToolTip="打开设置中的比例设置页，配置通用型批量打印可识别的比例。" />
             <Button x:Name="_sortSettingsBtn" Content="排序设置" MinWidth="76"
                     Style="{StaticResource PluginButtonStyle}" Margin="0,0,4,0"
                     Click="SortSettings_Click"
-                    ToolTip="选择矩形框空间排列顺序，并按选定方向重排当前列表。" />
+                    ToolTip="选择空间排列顺序，并按选定方向重排当前列表。" />
             <Button x:Name="_generalSettingsBtn" Content="常规设置" MinWidth="76"
                     Style="{StaticResource PluginButtonStyle}"
                     Click="GeneralSettings_Click"

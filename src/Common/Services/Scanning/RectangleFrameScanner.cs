@@ -480,7 +480,7 @@ public static class RectangleFrameScanner
                     ScaleText = paper.ScaleText,
                     SizeText = $"{width:0.##} x {height:0.##}",
                     PaperSizeText = $"{paper.PaperWidthMm:0.##} x {paper.PaperHeightMm:0.##} mm",
-                    DetectionNote = "矩形框批量打印",
+                    DetectionNote = "通用型批量打印",
                     PaperWidthMm = paper.PaperWidthMm,
                     PaperHeightMm = paper.PaperHeightMm,
                     DetectedRequiresCustomPaperRegistration = paper.RequiresCustomPaper,

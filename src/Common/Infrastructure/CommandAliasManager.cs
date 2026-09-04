@@ -28,7 +28,7 @@ internal static class CommandAliasManager
         new AliasableCommand("新增图框", "ZBP_ADD_TITLE_BLOCK"),
         new AliasableCommand("图框库管理", "ZBP_MANAGE_LIBRARY"),
         new AliasableCommand("批量打印(选图框块)", "ZBP_SHOW_PANEL"),
-        new AliasableCommand("批量打印(选矩形框)", "ZBP_RECTANGLE_BATCH_PLOT"),
+        new AliasableCommand("通用型批量打印", "ZBP_RECTANGLE_BATCH_PLOT"),
         new AliasableCommand("单张打印", "ZBP_SINGLE_PLOT"),
         new AliasableCommand("设置", "ZBP_SETTINGS"),
     };
