@@ -169,7 +169,7 @@ public static partial class PlotterService
         }
     }
 
-    /** Preview：单张预览：激活布局后走 PreviewDatabase。 */
+    /** Preview：单张预览。不切换活动文档、布局或视图，按已有图框窗口直接走 PreviewDatabase。 */
     public static void Preview(PlotJob job, string deviceName, string styleSheet, Document currentDocument)
     {
         var settings = AppSettingsStore.Load();
@@ -182,12 +182,9 @@ public static partial class PlotterService
         using var variables = PlotSystemVariables.Apply(settings.PlotTransparency);
         try
         {
-            CadApp.DocumentManager.MdiActiveDocument = doc;
             using (doc.LockDocument())
             {
                 // 首次扫描得到的图框信息已可用于预览，避免每次点击预览都重新扫描整张图纸。
-                ActivateLayout(doc.Database, job);
-                PrepareEditorViewForPlot(doc, job);
                 PreviewDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, doc);
             }
         }
@@ -262,7 +259,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotDocumentJobs：当前文档组：直接在 MdiActiveDocument 上逐张 PlotDatabase。 */
+    /** PlotDocumentJobs：当前文档组：不切换布局或视图，按已有窗口逐张 PlotDatabase。 */
     private static void PlotDocumentJobs(
         Document doc,
         IReadOnlyList<PlotJob> jobs,
@@ -273,8 +270,6 @@ public static partial class PlotterService
         List<PlotJobResult> results,
         CancellationToken cancellationToken)
     {
-        CadApp.DocumentManager.MdiActiveDocument = doc;
-
         using (doc.LockDocument())
         {
             RefreshJobsFromDatabase(doc.Database, jobs);
@@ -288,8 +283,6 @@ public static partial class PlotterService
                 beforeJob?.Invoke(job);
                 using (doc.LockDocument())
                 {
-                    ActivateLayout(doc.Database, job);
-                    PrepareEditorViewForPlot(doc, job);
                     PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
                 }
 

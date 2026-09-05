@@ -149,8 +149,9 @@ public static class CustomPaperBatchPreparer
         var registrations = PmpCustomPaper.RegisterCustomPapers(installedPmp, requests)
             ?? throw new InvalidOperationException(
                 $"{pmpFileName} 批量注册 {outputKind} 正负留白纸张失败，已停止打印，避免回退到错误纸张。");
-        // 本批需要自定义纸：一次写 PMP 后刷新一次介质（含复用已有尺寸），不按张、不按 CAD 版本分支。
-        var forceDeviceReload = customJobs.Count > 0;
+        // PMP 里已有的纸张只复用，不写文件、不刷绘图仪；只有本次真正新增尺寸才重载介质。
+        var pmpUpdated = registrations.Any(registration => registration.WasAdded);
+        var forceDeviceReload = pmpUpdated;
         var attachmentMessage = "";
 
 #if AUTOCAD
@@ -161,7 +162,7 @@ public static class CustomPaperBatchPreparer
             var attachment = AcadPlotterInstaller.EnsureActivePdfPmpAttachment(
                 installedPlotter,
                 installedPmp,
-                forceRewrite: forceDeviceReload);
+                forceRewrite: pmpUpdated);
             if (!attachment.Success)
             {
                 throw new InvalidOperationException("LA_pdf.pc3 关联批量 PMP 失败: " + attachment.Message);

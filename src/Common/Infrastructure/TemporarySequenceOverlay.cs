@@ -307,6 +307,7 @@ public sealed class TemporarySequenceOverlay : IDisposable
             existing.IsOff = false;
             existing.IsFrozen = false;
             existing.IsLocked = false;
+            // 覆盖层只给用户看图框范围；图层不可打印，PlotEngine 预览/出图会自动跳过。
             existing.IsPlottable = false;
             existing.Color = Color.FromColorIndex(ColorMethod.ByAci, 1);
             return existing.ObjectId;

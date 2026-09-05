@@ -37,11 +37,19 @@ public static class PmpCustomPaper
         public double HeightMm { get; set; }
     }
 
-    /// <summary>
-    /// 在 PMP 文件中注册自定义纸张尺寸。如果已存在同尺寸则跳过。
-    /// 返回纸张注册结果（名称及是否为本次新增），失败返回 null。
-    /// </summary>
-    public static Registration? RegisterCustomPaper(string pmpPath, double widthMm, double heightMm)
+    /**
+     * 在 PMP 中查找或注册自定义纸张。已有同尺寸时不写文件。
+     * @param pmpPath PMP 路径。
+     * @param widthMm 纸宽（毫米）。
+     * @param heightMm 纸高（毫米）。
+     * @param writeIfMissing 找不到同尺寸时是否写入；预览查重时应为 false。
+     * @returns 纸张名称及是否为本次新增；失败返回 null。
+     */
+    public static Registration? RegisterCustomPaper(
+        string pmpPath,
+        double widthMm,
+        double heightMm,
+        bool writeIfMissing = true)
     {
         if (!File.Exists(pmpPath)) return null;
 
@@ -52,14 +60,14 @@ public static class PmpCustomPaper
 
 #if !ZWCAD
             if (raw.StartsWith("PIAFILEVERSION_3.0", StringComparison.OrdinalIgnoreCase))
-                return RegisterPia3(pmpPath, raw, widthMm, heightMm);
+                return RegisterPia3(pmpPath, raw, widthMm, heightMm, writeIfMissing);
 #endif
 
             if (raw.StartsWith("[Meta]", StringComparison.OrdinalIgnoreCase)
                 || raw.StartsWith("[Meta]\r", StringComparison.OrdinalIgnoreCase))
-                return RegisterZwcadIni(pmpPath, raw, widthMm, heightMm);
+                return RegisterZwcadIni(pmpPath, raw, widthMm, heightMm, writeIfMissing);
 
-            return RegisterPia2(pmpPath, widthMm, heightMm);
+            return RegisterPia2(pmpPath, widthMm, heightMm, writeIfMissing);
         }
         catch
         {
@@ -99,7 +107,12 @@ public static class PmpCustomPaper
     }
 
 #if !ZWCAD
-    private static Registration? RegisterPia3(string pmpPath, string raw, double widthMm, double heightMm)
+    private static Registration? RegisterPia3(
+        string pmpPath,
+        string raw,
+        double widthMm,
+        double heightMm,
+        bool writeIfMissing)
     {
         var jsonStart = raw.IndexOf('{');
         if (jsonStart < 0) return null;
@@ -133,6 +146,11 @@ public static class PmpCustomPaper
                     WasAdded = false
                 };
             }
+        }
+
+        if (!writeIfMissing)
+        {
+            return null;
         }
 
         // 找下一个可用索引
@@ -180,7 +198,7 @@ public static class PmpCustomPaper
     }
 #endif
 
-    private static Registration? RegisterPia2(string pmpPath, double widthMm, double heightMm)
+    private static Registration? RegisterPia2(string pmpPath, double widthMm, double heightMm, bool writeIfMissing)
     {
         // PIA 2.0：使用 PianNoCN 库，结构与 PIA 3.0 一致：udm.media.description/{N} + udm.media.size/{N}
         try
@@ -210,7 +228,7 @@ public static class PmpCustomPaper
                         repaired |= MovePia2StringValue(match, "localized_name");
                         repaired |= MovePia2StringValue(match, "media_description_name");
                     }
-                    if (repaired)
+                    if (repaired && writeIfMissing)
                         config.Saves(pmpPath);
 
                     var matchName = match == null ? "" : GetPia2StringValue(match, "localized_name");
@@ -220,6 +238,11 @@ public static class PmpCustomPaper
                         WasAdded = false
                     };
                 }
+            }
+
+            if (!writeIfMissing)
+            {
+                return null;
             }
 
             // 找下一个可用索引
@@ -268,12 +291,22 @@ public static class PmpCustomPaper
     /// [user]
     /// paper_name0=...  paper_local_name0=...  size_x0=...  size_y0=...
     /// </summary>
-    private static Registration? RegisterZwcadIni(string pmpPath, string raw, double widthMm, double heightMm)
+    private static Registration? RegisterZwcadIni(
+        string pmpPath,
+        string raw,
+        double widthMm,
+        double heightMm,
+        bool writeIfMissing)
     {
         // 检查同尺寸是否已存在
         var existingLocalName = FindZwcadPaperBySize(raw, widthMm, heightMm);
         if (existingLocalName != null)
             return new Registration { PaperName = existingLocalName, WasAdded = false };
+
+        if (!writeIfMissing)
+        {
+            return null;
+        }
 
         // 解析 userdef_num
         var numMatch = Regex.Match(raw, @"userdef_num=(\d+)");
@@ -342,10 +375,9 @@ public static class PmpCustomPaper
         return null;
     }
 
-    /// <summary>
-    /// 一次性注册一批任意纸张。所有尺寸先在同目录临时副本中完成格式适配和去重，
-    /// 全部成功后才整体替换正式 PMP；因此用户正在使用的 PMP 只修改一次，不会逐张图反复写入。
-    /// </summary>
+    /**
+     * 一次性注册一批任意纸张。已有尺寸只查不写；缺的尺寸先写入临时副本，成功后再替换正式 PMP。
+     */
     public static IReadOnlyList<Registration>? RegisterCustomPapers(
         string pmpPath,
         IEnumerable<PaperRequest> requests)
@@ -377,6 +409,27 @@ public static class PmpCustomPaper
         if (normalized.Count == 0)
             return new List<Registration>();
 
+        var existing = new List<Registration>();
+        var missing = new List<PaperRequest>();
+        foreach (var request in normalized)
+        {
+            var found = RegisterCustomPaper(pmpPath, request.WidthMm, request.HeightMm, writeIfMissing: false);
+            if (found == null)
+            {
+                missing.Add(request);
+                continue;
+            }
+
+            found.WidthMm = request.WidthMm;
+            found.HeightMm = request.HeightMm;
+            existing.Add(found);
+        }
+
+        if (missing.Count == 0)
+        {
+            return existing;
+        }
+
         var directory = Path.GetDirectoryName(pmpPath) ?? "";
         var stagedPath = Path.Combine(
             directory,
@@ -385,8 +438,8 @@ public static class PmpCustomPaper
         {
             var originalBytes = File.ReadAllBytes(pmpPath);
             File.Copy(pmpPath, stagedPath, true);
-            var registrations = new List<Registration>();
-            foreach (var request in normalized)
+            var registrations = new List<Registration>(existing);
+            foreach (var request in missing)
             {
                 var registration = RegisterCustomPaper(stagedPath, request.WidthMm, request.HeightMm);
                 if (registration == null)

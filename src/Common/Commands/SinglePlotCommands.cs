@@ -139,13 +139,13 @@ public sealed partial class BatchPlotCommands
 
                         customPaperRegistration = PmpCustomPaper.RegisterCustomPaper(customPmpPath, paperW, paperH)
                             ?? throw new InvalidOperationException("LA_pdf.pmp 注册任意纸张失败。");
-                        // 需要自定义纸时刷新一次介质；不按 CAD 版本分支。
-                        forceCustomPaperReload = true;
+                        // PMP 已有该尺寸时不刷新绘图仪；只有本次真正写入新纸张才重载介质。
+                        forceCustomPaperReload = customPaperRegistration.WasAdded;
 #if AUTOCAD
                         var attachment = AcadPlotterInstaller.EnsureActivePdfPmpAttachment(
                             installedPlotter,
                             customPmpPath,
-                            forceRewrite: true);
+                            forceRewrite: customPaperRegistration.WasAdded);
                         if (!attachment.Success)
                         {
                             throw new InvalidOperationException("LA_pdf.pc3 关联当前 PMP 失败：" + attachment.Message);
@@ -230,7 +230,7 @@ public sealed partial class BatchPlotCommands
                 PaperMarginMm = form.PaperMarginMm,
                 RequireExactPaperSize = isArbitraryPaper,
                 UseExactWindowScale = isArbitraryPaper,
-                // 此字段控制 PlotterService 的设备介质重载；PIA2 复用已有纸张时也必须为 true。
+                // 仅 PMP 本次新增纸张（或 PC3 关联被改写）时重载介质；已有尺寸直接复用缓存。
                 CustomPaperWasAdded = forceCustomPaperReload
             };
 

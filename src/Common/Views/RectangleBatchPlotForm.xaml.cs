@@ -418,8 +418,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var selectedRows = _grid.SelectedItems.OfType<Row>().ToList();
-        var currentItem = _grid.CurrentItem as Row;
+        // 红框/序号在不打印层，预览不必取消表格选中或改 CAD 高亮。
         CadWindowFocus.HideForCadInput(this);
         try
         {
@@ -443,31 +442,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         finally
         {
             CadWindowFocus.RestoreDialog(this);
-            RestoreGridSelection(selectedRows, currentItem);
-        }
-    }
-
-    private void RestoreGridSelection(IReadOnlyList<Row> selectedRows, Row? currentItem)
-    {
-        try
-        {
-            _grid.UnselectAll();
-            foreach (var row in selectedRows)
-            {
-                if (_displayRows.Contains(row))
-                {
-                    _grid.SelectedItems.Add(row);
-                }
-            }
-
-            if (currentItem != null && _displayRows.Contains(currentItem))
-            {
-                _grid.CurrentItem = currentItem;
-            }
-        }
-        catch
-        {
-            // CAD 预览退出后可能触发 DataGrid 选择状态变化；恢复失败不影响后续打印。
         }
     }
 

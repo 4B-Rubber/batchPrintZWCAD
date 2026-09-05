@@ -1986,7 +1986,7 @@ public sealed partial class BatchPlotForm : Window
         var mergedOutputPaths = new List<string>();
         var completed = 0;
 
-        ShowSequenceOverlayForPrint(selected);
+        // 红框/序号在不打印层，打印管道会自动跳过，不必重建或清除覆盖层。
         // 切换按钮为"停止"状态
         _printCts = new CancellationTokenSource();
         _printButton.Content = "停止";
@@ -2151,8 +2151,6 @@ public sealed partial class BatchPlotForm : Window
                 TryDeleteDirectory(temporaryDirectory);
             }
 
-            ClearSequenceOverlay();
-
             // 恢复按钮
             _printCts?.Dispose();
             _printCts = null;
@@ -2266,11 +2264,8 @@ public sealed partial class BatchPlotForm : Window
         job.LeavePaperMargin = SupportsLeaveMargin && _leaveMarginCheckBox.IsChecked == true;
         job.PaperMarginMm = ReadMarginValue(_marginInput);
         var wasVisible = IsVisible;
-        var selectedRows = _grid.SelectedItems.OfType<PlotJob>().ToList();
-        var currentCell = _grid.CurrentCell;
         try
         {
-            _grid.UnselectAll();
             CadWindowFocus.HideForCadInput(this);
             // 预览任一图纸前也按当前勾选集合一次性准备全部纸张；当前行即使未勾选，也必须纳入本次准备。
             var previewJobs = _jobs
@@ -2293,7 +2288,6 @@ public sealed partial class BatchPlotForm : Window
             {
                 CadWindowFocus.RestoreDialog(this);
             }
-            RestoreGridSelection(selectedRows, currentCell);
         }
     }
 
@@ -2327,33 +2321,6 @@ public sealed partial class BatchPlotForm : Window
             AppendLog("INFO", "AutoCAD 自定义纸张关联刷新: " + result.AttachmentMessage);
         }
 #endif
-    }
-
-    private void RestoreGridSelection(IReadOnlyList<PlotJob> selectedRows, DataGridCellInfo currentCell)
-    {
-        try
-        {
-            _grid.UnselectAll();
-            foreach (var job in selectedRows)
-            {
-                if (_jobs.Contains(job))
-                {
-                    _grid.SelectedItems.Add(job);
-                }
-            }
-
-            if (currentCell.Item != null
-                && _jobs.Contains(currentCell.Item)
-                && currentCell.Column != null
-                && _grid.Columns.Contains(currentCell.Column))
-            {
-                _grid.CurrentCell = currentCell;
-            }
-        }
-        catch
-        {
-            // 预览窗口退出后 CAD/WPF 可能重置选择状态，恢复失败不影响打印主流程。
-        }
     }
 
     private string GetAutomaticMergedOutputPath(IReadOnlyList<PlotJob> selected)
@@ -2406,25 +2373,6 @@ public sealed partial class BatchPlotForm : Window
         }
         catch
         {
-        }
-    }
-
-    private void ShowSequenceOverlayForPrint(IReadOnlyList<PlotJob> selected)
-    {
-        var currentJobs = selected.Where(IsCurrentDocumentJob).ToList();
-        if (currentJobs.Count == 0)
-        {
-            ClearSequenceOverlay();
-            return;
-        }
-
-        try
-        {
-            _sequenceOverlay.Show(currentJobs);
-        }
-        catch (Exception ex)
-        {
-            AppendLog("WARN", "打印临时序号标注显示失败: " + ex.Message);
         }
     }
 
