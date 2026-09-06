@@ -2264,9 +2264,11 @@ public sealed partial class BatchPlotForm : Window
         job.LeavePaperMargin = SupportsLeaveMargin && _leaveMarginCheckBox.IsChecked == true;
         job.PaperMarginMm = ReadMarginValue(_marginInput);
         var wasVisible = IsVisible;
+        // 非模态按钮处于应用上下文；PlotEngine 交互预览必须进命令上下文，否则会「假启动」
+        // （预览窗出来但滚轮仍归主编辑器）。先准备纸张并隐藏本窗，再 SendStringToExecute 拉起内部命令。
+        CadWindowFocus.HideForCadInput(this);
         try
         {
-            CadWindowFocus.HideForCadInput(this);
             // 预览任一图纸前也按当前勾选集合一次性准备全部纸张；当前行即使未勾选，也必须纳入本次准备。
             var previewJobs = _jobs
                 .Where(candidate => candidate.Selected || ReferenceEquals(candidate, job))
@@ -2275,15 +2277,39 @@ public sealed partial class BatchPlotForm : Window
             ApplyLeaveMarginSelection(previewJobs);
             PrepareCustomPaperRegistrations(previewJobs, device);
             AppendLog("INFO", $"CAD 内部预览 {job.DrawingNumber}_{job.Title}");
-            PlotterService.Preview(job, device, style, _currentDocument);
+
+            PendingPlotPreview.Queue(new PendingPlotPreview.Request
+            {
+                Job = job,
+                DeviceName = device,
+                StyleSheet = style,
+                Document = _currentDocument,
+                OnFinally = () =>
+                {
+                    if (wasVisible)
+                    {
+                        CadWindowFocus.RestoreDialog(this);
+                    }
+                },
+                OnError = ex =>
+                {
+                    AppendLog("ERROR", "打印预览失败: " + ex);
+                    System.Windows.MessageBox.Show(
+                        "打印预览失败: " + ex.Message,
+                        "打印预览",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+            });
+
+            var doc = CadApp.DocumentManager.MdiActiveDocument ?? _currentDocument;
+            doc.SendStringToExecute("_ZBP_INTERNAL_PREVIEW ", true, false, false);
         }
         catch (Exception ex)
         {
+            PendingPlotPreview.Take();
             AppendLog("ERROR", "打印预览失败: " + ex);
             System.Windows.MessageBox.Show("打印预览失败: " + ex.Message, "打印预览", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
             if (wasVisible)
             {
                 CadWindowFocus.RestoreDialog(this);

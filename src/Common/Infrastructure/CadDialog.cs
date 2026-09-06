@@ -42,22 +42,16 @@ internal static class CadDialog
         }
 
         AttachTopLevelFocusRestore(window);
-#if ACAD_CORE
-        return window.ShowDialog();
-#else
+        // AutoCAD 2025-2027（ACAD_CORE）也必须走 CAD API；普通 WPF ShowDialog 不会注册模态状态。
         return CadApp.ShowModalWindow(window);
-#endif
     }
 
     /// <summary>非模态面板，对应 <c>CadApp.ShowModelessDialog(form)</c>。</summary>
     public static void ShowModeless(Window window)
     {
         AttachTopLevelFocusRestore(window);
-#if ACAD_CORE
-        window.Show();
-#else
+        // 非模态窗须由 CAD 注册（acedRegisterModelessDialog 语义）；勿用普通 Show()。
         CadApp.ShowModelessWindow(window);
-#endif
     }
 
     /// <summary>

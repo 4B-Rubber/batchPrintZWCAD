@@ -106,6 +106,33 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
     [CommandMethod("_ZBP_INTERNAL_RECTANGLE_BATCH_PLOT", CommandFlags.Session)]
     public void RectangleBatchPlotLegacy() => ShowRectangleBatchPlotCore();
 
+    /**
+     * 非模态窗预览入口：由 SendStringToExecute 拉起，确保 PlotEngine 在命令上下文中启动。
+     * NoHistory：不污染用户命令历史。
+     */
+    [CommandMethod("_ZBP_INTERNAL_PREVIEW", CommandFlags.NoHistory)]
+    public void InternalPreview()
+    {
+        var request = PendingPlotPreview.Take();
+        if (request == null)
+        {
+            return;
+        }
+
+        try
+        {
+            PlotterService.Preview(request.Job, request.DeviceName, request.StyleSheet, request.Document);
+        }
+        catch (System.Exception ex)
+        {
+            request.OnError?.Invoke(ex);
+        }
+        finally
+        {
+            request.OnFinally?.Invoke();
+        }
+    }
+
     [CommandMethod("ZBP_OPEN_CONFIG")]
     public void OpenConfigDirectory()
     {

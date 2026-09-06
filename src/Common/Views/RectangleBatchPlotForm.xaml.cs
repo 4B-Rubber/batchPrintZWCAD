@@ -419,6 +419,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
 
         // 红框/序号在不打印层，预览不必取消表格选中或改 CAD 高亮。
+        // 非模态按钮处于应用上下文；PlotEngine 交互预览必须进命令上下文，否则会「假启动」。
         CadWindowFocus.HideForCadInput(this);
         try
         {
@@ -433,14 +434,28 @@ public sealed partial class RectangleBatchPlotForm : Window
             // 同步留白设置到所有准备作业，保证扩大/缩比例模式即时生效。
             ApplyLeaveMarginSelection(previewJobs);
             CustomPaperBatchPreparer.Prepare(previewJobs, device);
-            PlotterService.Preview(row.Job, device, SelectedStyle(), _document);
+
+            PendingPlotPreview.Queue(new PendingPlotPreview.Request
+            {
+                Job = row.Job,
+                DeviceName = device,
+                StyleSheet = SelectedStyle(),
+                Document = _document,
+                OnFinally = () => CadWindowFocus.RestoreDialog(this),
+                OnError = ex => MessageBox.Show(
+                    "打印预览失败: " + ex.Message,
+                    Title,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error)
+            });
+
+            var doc = CadApp.DocumentManager.MdiActiveDocument ?? _document;
+            doc.SendStringToExecute("_ZBP_INTERNAL_PREVIEW ", true, false, false);
         }
         catch (Exception ex)
         {
+            PendingPlotPreview.Take();
             MessageBox.Show("打印预览失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
             CadWindowFocus.RestoreDialog(this);
         }
     }
