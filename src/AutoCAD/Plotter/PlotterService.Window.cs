@@ -28,23 +28,28 @@ using CadApp = Autodesk.AutoCAD.ApplicationServices.Application;
  * 核心代码：
  * - GetWorldToDisplayMatrix：WCS→显示坐标；旋转 UCS 须用真实四角而非包围盒二次放大
  * - PrepareEditorViewForPlot：ViewDirection 固定俯视，避免三维/轴测误打
+ * - ResolvePlotRotation：PNG/JPG 只用选纸 PreferredRotation，不再二次翻面（对齐 ZWCAD）
  *
- * 注意：PDF 与 PNG/JPG 共用窗口逻辑；修栅格问题优先查 Pipeline/Scale，勿改这里。
+ * 注意：窗口坐标 PDF/PNG 共用；栅格旋转策略与 PDF 不同，见 ResolvePlotRotation。
  */
 
 namespace ZwcadBatchPlot;
 
 public static partial class PlotterService
 {
-    /** ResolvePlotRotation：解析最终打印旋转；PNG/JPG 与 PDF 共用窗口横竖兜底。 */
+    /** ResolvePlotRotation：解析最终打印旋转；栅格只用选纸方向，PDF 再按窗口横竖兜底。 */
     private static PlotRotation ResolvePlotRotation(
         string deviceName,
         PlotRotation paperRotation,
         PlotJob job,
         Extents2d window)
     {
-        // PNG/JPG 与 PDF 同一套旋转判断：介质 PreferredRotation + 窗口横竖兜底。
-        _ = deviceName;
+        if (IsRasterPlotDevice(deviceName))
+        {
+            // 栅格目标方向已在 ChooseMedia 按 DCS 窗口定好；禁止再 Toggle，否则竖纸+90° 叠成斜切。
+            return paperRotation;
+        }
+
         return ResolveWindowRotation(paperRotation, job, window);
     }
 

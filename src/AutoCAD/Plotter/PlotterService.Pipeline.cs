@@ -26,9 +26,9 @@ using CadApp = Autodesk.AutoCAD.ApplicationServices.Application;
  * - RunPlot / PreviewDatabase / RunPreview：调用 PlotEngine
  *
  * 核心代码：
- * - CopyFrom(layout)：必须以布局为底，避免空 PlotSettings 导致栅格退回 Display
- * - ReassertRasterFitSettings：PNG/JPG 在 MatchEnabled 校验后重申 Window + ScaleToFit
- * - ShadePlot=Wireframe：栅格禁止「按显示」，否则轴测视图会打成倾斜小图
+ * - CopyFrom(layout)：必须以布局为底，避免空 PlotSettings 导致栅格退化
+ * - MatchEnabled 校验后：PNG 不再 Reassert+二次 Validate（曾改写窗口/比例/原点，与对话框分叉）
+ * - 不强制 ShadePlot=Wireframe：沿用布局/对话框「按显示」等着色设置
  *
  * 注意：PDF/PNG/JPG 共用本管道，仅换绘图仪；勿单独改栅格窗口逻辑。
  */
@@ -142,24 +142,12 @@ public static partial class PlotterService
                     MediaMatchingPolicy = MatchingPolicy.MatchEnabled
                 }.Validate(info);
 
-                if (IsRasterPlotDevice(deviceName))
-                {
-                    // 窗口与 PDF 相同；问题在校验阶段：MatchEnabled 常把 PNG/JPG 的「布满图纸」
-                    // 改成错误自定义比例（对话框可见 1 pixel = 25.4），结果大白纸上内容极小。
-                    // 这里在校验后强制恢复 Window + 比例，再校验一次写入 ValidatedSettings。
-                    ReassertRasterFitSettings(
-                        validator, settings, window, job, deviceName, hideOuterFrame);
-                    new PlotInfoValidator
-                    {
-                        MediaMatchingPolicy = MatchingPolicy.MatchEnabled
-                    }.Validate(info);
-                }
-                else if (job.RequireExactPaperSize
+                // PNG/JPG 与 PDF 一样：一次 MatchEnabled 校验后即交引擎。
+                // 旧逻辑 ReassertRasterFitSettings + 二次 Validate 会重写 Window/Scale/原点，易与对话框分叉。
+                if (job.RequireExactPaperSize
                     && job.UseExactWindowScale
                     && settings.PlotPaperUnits == PlotPaperUnit.Inches)
                 {
-                    // AutoCAD 2024 会在 PlotInfo 校验阶段把部分毫米自定义介质重新匹配为英寸介质。
-                    // 必须按最终单位重写比例并重新居中，否则毫米分子会被按英寸解释，内容放大 25.4 倍。
                     ConfigurePlotScale(validator, settings, window, job, deviceName, hideOuterFrame);
                     ResetAndCenterPlot(validator, settings);
                     new PlotInfoValidator
@@ -197,7 +185,7 @@ public static partial class PlotterService
         throw failure;
     }
 
-    /** ConfigurePlotSettings：写入设备、纸张单位、介质、Window、比例、旋转、样式与栅格线框着色。 */
+    /** ConfigurePlotSettings：写入设备、纸张单位、介质、Window、比例、旋转、样式与透明度。 */
     private static void ConfigurePlotSettings(
         PlotSettingsValidator validator,
         PlotSettings settings,
@@ -257,46 +245,6 @@ public static partial class PlotterService
         }
 
         settings.PlotTransparency = plotTransparency;
-        if (IsRasterPlotDevice(deviceName))
-        {
-            // CopyFrom(layout) 会带入「按显示」着色；栅格驱动按显示投影时，轴测画面会打成倾斜小图。
-            // PDF 矢量输出不受此影响。PNG/JPG 固定线框，与窗口正交打印一致。
-            try
-            {
-                settings.ShadePlot = PlotSettingsShadePlotType.Wireframe;
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    /** ReassertRasterFitSettings：栅格设备在 PlotInfo 校验后重申 Window 与比例，避免 ValidatedSettings 丢掉「布满图纸」。 */
-    private static void ReassertRasterFitSettings(
-        PlotSettingsValidator validator,
-        PlotSettings settings,
-        Extents2d window,
-        PlotJob job,
-        string deviceName,
-        bool hideOuterFrame)
-    {
-        validator.SetPlotPaperUnits(settings, PlotPaperUnit.Pixels);
-        validator.SetPlotWindowArea(settings, window);
-        validator.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
-        ConfigurePlotScale(validator, settings, window, job, deviceName, hideOuterFrame);
-        if (hideOuterFrame)
-        {
-            TryApplyHiddenFrameWindow(validator, settings, window, job, deviceName);
-        }
-
-        ResetAndCenterPlot(validator, settings);
-        try
-        {
-            settings.ShadePlot = PlotSettingsShadePlotType.Wireframe;
-        }
-        catch
-        {
-        }
     }
 
     /** RunPlot：调用 PlotEngine 把 PlotInfo 输出到文件，并等待引擎空闲。 */

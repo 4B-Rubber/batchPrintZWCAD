@@ -270,11 +270,7 @@ public static partial class PlotterService
         List<PlotJobResult> results,
         CancellationToken cancellationToken)
     {
-        using (doc.LockDocument())
-        {
-            RefreshJobsFromDatabase(doc.Database, jobs);
-        }
-
+        // 与预览一致：直接使用批打已准备好的窗口（含 DCS），不再出图前重扫图框。
         foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -311,7 +307,6 @@ public static partial class PlotterService
         db.ReadDwgFile(sourceFile, FileOpenMode.OpenForReadAndAllShare, true, "");
         db.CloseInput(true);
         db.ResolveXrefs(true, false);
-        RefreshJobsFromDatabase(db, jobs);
 
         foreach (var job in jobs)
         {

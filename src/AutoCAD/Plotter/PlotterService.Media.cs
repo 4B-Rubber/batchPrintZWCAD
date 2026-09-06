@@ -30,7 +30,7 @@ using CadApp = Autodesk.AutoCAD.ApplicationServices.Application;
  * - GetPlotPaperSizeMm / PixelsToMillimeters：像素介质尺寸换算到毫米再比对
  * - EnsureRequiredMediaSize：校验后确认介质尺寸仍符合任务要求
  *
- * 注意：选纸/旋转应与 PDF 同一策略；栅格仅在匹配失败时走 BestRasterMedia。
+ * 注意：PDF 按纸名/毫米选纸；PNG/JPG 目标方向跟 DCS 窗口，同误差优先零旋转（对齐对话框横纸+0°）。
  */
 
 namespace ZwcadBatchPlot;
@@ -64,6 +64,16 @@ public static partial class PlotterService
             : job.PaperWidthMm > 0 ? job.PaperWidthMm : Math.Abs(job.MaxX - job.MinX);
         var targetHeight = job.EffectivePaperHeightMm > 0 ? job.EffectivePaperHeightMm
             : job.PaperHeightMm > 0 ? job.PaperHeightMm : Math.Abs(job.MaxY - job.MinY);
+        var isRaster = IsRasterPlotDevice(deviceName);
+        if (isRaster)
+        {
+            // 栅格画布方向跟 PlotWindowArea 同一套 DCS 窗口，避免横纸任务误绑竖像素纸再转 90°。
+            var windowWidth = Math.Abs(window.MaxPoint.X - window.MinPoint.X);
+            var windowHeight = Math.Abs(window.MaxPoint.Y - window.MinPoint.Y);
+            RasterPlotOrientation.GetDcsOrientedPaperSize(
+                job, windowWidth, windowHeight, out targetWidth, out targetHeight);
+        }
+
         var choices = catalog.Select(item =>
         {
             var directError = DirectSizeError(item.WidthMm, item.HeightMm, targetWidth, targetHeight);
@@ -79,15 +89,9 @@ public static partial class PlotterService
             };
         }).ToList();
 
-        // PNG/JPG 与 PDF 同一套选纸：目标毫米尺寸来自前端；目录项已把像素换算成毫米。
-        // 仅在毫米匹配失败时才按长宽比兜底选像素画布（见下方 BestRasterMedia）。
+        // 目录项已把像素换算成毫米。栅格同误差时优先零旋转（对话框横纸+0°）；失败再 BestRasterMedia。
         var matchTolerance = job.RequireExactPaperSize ? ExactMediaToleranceMm : MediaMatchToleranceMm;
-        var exact = choices
-            .Where(x => x.Error <= matchTolerance)
-            .OrderBy(x => x.Error)
-            .ThenBy(x => x.IsFullBleed ? 0 : 1)
-            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+        var exact = PickPreferredMedia(choices.Where(x => x.Error <= matchTolerance));
         if (exact != null && (job.RequireExactPaperSize || IsLongPaperName(job.PaperName ?? "")))
         {
             exact.RequiresExactSize = true;
@@ -97,7 +101,7 @@ public static partial class PlotterService
 
         if (job.RequireExactPaperSize)
         {
-            if (IsRasterPlotDevice(deviceName))
+            if (isRaster)
             {
                 return BestRasterMedia(choices, targetWidth, targetHeight)
                        ?? throw new InvalidOperationException(
@@ -127,7 +131,7 @@ public static partial class PlotterService
             return exact;
         }
 
-        if (IsRasterPlotDevice(deviceName))
+        if (isRaster)
         {
             return BestRasterMedia(choices, targetWidth, targetHeight)
                    ?? throw new InvalidOperationException($"栅格输出设备没有可用像素介质: {deviceName}");
@@ -143,15 +147,12 @@ public static partial class PlotterService
                 Error = 0,
                 UseClosestBySize = true,
                 RequiresExactSize = true,
-                PreferredRotation = targetWidth >= targetHeight ? PlotRotation.Degrees090 : PlotRotation.Degrees000
+                // 介质尺寸已按目标宽高写入，无需再转 90°。
+                PreferredRotation = PlotRotation.Degrees000
             };
         }
 
-        var closest = choices
-            .OrderBy(x => x.Error)
-            .ThenBy(x => x.IsFullBleed ? 0 : 1)
-            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+        var closest = PickPreferredMedia(choices);
         if (closest != null)
         {
             return closest;
@@ -161,8 +162,19 @@ public static partial class PlotterService
         return new MediaChoice
         {
             Name = fallbackName,
-            PreferredRotation = job.PaperWidthMm >= job.PaperHeightMm ? PlotRotation.Degrees090 : PlotRotation.Degrees000
+            PreferredRotation = PlotRotation.Degrees000
         };
+    }
+
+    /** PickPreferredMedia：同误差优先满版、再优先零旋转（同向像素纸），最后按名称。 */
+    private static MediaChoice? PickPreferredMedia(IEnumerable<MediaChoice> choices)
+    {
+        return choices
+            .OrderBy(x => x.Error)
+            .ThenBy(x => x.IsFullBleed ? 0 : 1)
+            .ThenBy(x => x.PreferredRotation == PlotRotation.Degrees000 ? 0 : 1)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
     }
 
     /** GetMediaCatalog：读取或缓存设备介质目录（含物理尺寸）。 */
@@ -255,7 +267,7 @@ public static partial class PlotterService
     private static string BuildMediaCatalogCacheKey(string deviceName, bool modelType)
     {
         var plottersDirectory = AcadPlotterInstaller.GetPlottersDirectory();
-        // 2027 迁移旧配置后可能同时存在多个同名 PC3。缓存必须跟踪 AutoCAD
+        // 2027 迁移旧配置后可能同时存在多个同名 PC3。缓存必须跟着 AutoCAD
         // 实际解析到的完整路径及其真实关联 PMP，不能只指纹化程序假定的根目录副本。
         var devicePath = AcadPlotterInstaller.ResolveActivePlotterPath(deviceName);
         if (string.IsNullOrWhiteSpace(devicePath) && !string.IsNullOrWhiteSpace(plottersDirectory))
@@ -305,12 +317,8 @@ public static partial class PlotterService
     {
         var paper = job.PaperName ?? "";
         var basePaper = GetBasePaperName(paper);
-        return choices
-            .Where(x => MediaNameMatchesPaper(x.Name, paper, basePaper))
-            .OrderBy(x => x.Error)
-            .ThenBy(x => x.IsFullBleed ? 0 : 1)
-            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+        return PickPreferredMedia(
+            choices.Where(x => MediaNameMatchesPaper(x.Name, paper, basePaper)));
     }
 
     /** BestRasterMedia：栅格兜底：按窗口长宽比选最接近的像素介质。 */

@@ -19,14 +19,14 @@ using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
  * 主要功能：
  * - PlotMany / Plot / Preview：对外 API
  * - 当前文档 / 已打开文档 / 侧开 Database 三条分组路径
- * - 布局激活、已打开图窗口刷新、介质名缓存
+ * - 布局激活、介质名缓存
  *
  * 核心代码：
  * - GetPlotGroupKey：任务分组键，决定打开方式
  * - PlotCurrentDocumentGroup / PlotOpenedDocumentGroup / PlotSideDatabaseGroup
- * - RefreshJobWindowFromOpenedDocument：已打开图重算窗口后再打印
  *
  * 注意：具体设备与 PlotSettings 配置在 Pipeline；介质/比例/窗口见其他 partial。
+ * 出图窗口以批打/预览已写入的 job 为准，不再出图前重扫图框。
  */
 
 namespace ZwcadBatchPlot;
@@ -124,7 +124,6 @@ public static partial class PlotterService
         {
             using (currentDocument.LockDocument())
             {
-                RefreshJobWindowFromOpenedDocument(currentDocument.Database, job);
                 PlotDatabase(currentDocument.Database, currentDocument.Name, job, deviceName, styleSheet, settings, currentDocument);
             }
 
@@ -219,7 +218,6 @@ public static partial class PlotterService
                 beforeJob?.Invoke(job);
                 using (currentDocument.LockDocument())
                 {
-                    RefreshJobWindowFromOpenedDocument(currentDocument.Database, job);
                     PlotDatabase(currentDocument.Database, currentDocument.Name, job, deviceName, styleSheet, settings, currentDocument);
                 }
 
@@ -258,7 +256,6 @@ public static partial class PlotterService
                     beforeJob?.Invoke(job);
                     using (doc.LockDocument())
                     {
-                        RefreshJobWindowFromOpenedDocument(doc.Database, job);
                         PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
                     }
 
@@ -325,7 +322,6 @@ public static partial class PlotterService
         {
             using (doc.LockDocument())
             {
-                RefreshJobWindowFromOpenedDocument(doc.Database, job);
                 PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
             }
         }
@@ -359,47 +355,6 @@ public static partial class PlotterService
         {
             throw new InvalidOperationException($"无法激活目标布局“{job.SpaceName}”，已停止打印以避免输出错误区域。", ex);
         }
-    }
-
-    /** RefreshJobWindowFromOpenedDocument：已打开图重算图框窗口，避免旧坐标出图。 */
-    private static void RefreshJobWindowFromOpenedDocument(Database db, PlotJob job)
-    {
-        if (job.IsManualWindow)
-        {
-            return;
-        }
-
-        var library = TitleBlockLibraryStore.Load();
-        var candidates = TitleBlockScanner.Scan(db, library, job.SourceFile)
-            .Where(x => string.Equals(x.SpaceName, job.SpaceName, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(x.BlockName, job.BlockName, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        var refreshed = candidates.FirstOrDefault(x =>
-                !string.IsNullOrWhiteSpace(job.BlockHandle)
-                && string.Equals(x.BlockHandle, job.BlockHandle, StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault(x =>
-                string.Equals(x.DrawingNumber, job.DrawingNumber, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(x.Title, job.Title, StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault(x => x.MatchIndex == job.MatchIndex);
-
-        if (refreshed == null)
-        {
-            throw new InvalidOperationException(
-                $"重新打开图纸后未找到原图框。布局={job.SpaceName}，块={job.BlockName}，句柄={job.BlockHandle}。请重新扫描图纸后再打印。");
-        }
-
-        job.MinX = refreshed.MinX;
-        job.MinY = refreshed.MinY;
-        job.MaxX = refreshed.MaxX;
-        job.MaxY = refreshed.MaxY;
-        job.IsDcsWindow = false;  // 重新扫描后坐标回到 WCS，清除 DCS 标记
-        job.PaperName = refreshed.PaperName;
-        job.ScaleText = refreshed.ScaleText;
-        job.SizeText = refreshed.SizeText;
-        job.PaperSizeText = refreshed.PaperSizeText;
-        job.PaperWidthMm = refreshed.PaperWidthMm;
-        job.PaperHeightMm = refreshed.PaperHeightMm;
     }
 
     /** FindOpenDocument：按路径查找已打开文档。 */

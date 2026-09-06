@@ -22,15 +22,14 @@ using CadApp = Autodesk.AutoCAD.ApplicationServices.Application;
  *
  * 主要功能：
  * - FindLayoutForJob / ActivateLayout：按任务找到并激活布局
- * - RefreshJobsFromDatabase：已打开图刷新窗口，避免旧坐标出图
  * - PrepareOutputFile / ValidatePlotOutput：落盘前准备与落盘后校验
  * - WaitForPlotIdle / TryPlotCleanup：等待引擎空闲与安全清理
  *
  * 核心代码：
- * - RefreshJobsFromDatabase：重新扫描失败必须中止，防止错误窗口批量输出
  * - ValidatePlotOutput：检查文件存在、非空，PDF 额外用 PdfSharp 打开验证
  *
  * 注意：文档关闭一律不保存；勿在出图路径触发另存。
+ * 出图窗口以批打/预览已写入的 job 为准，不再出图前重扫图框。
  */
 
 namespace ZwcadBatchPlot;
@@ -105,64 +104,6 @@ public static partial class PlotterService
         catch (Exception ex)
         {
             throw new InvalidOperationException($"无法激活目标布局“{job.SpaceName}”，已停止打印以避免输出错误区域。", ex);
-        }
-    }
-
-    /** RefreshJobsFromDatabase：已打开图重新扫描图框窗口；失败则中止以免错窗批量输出。 */
-    private static void RefreshJobsFromDatabase(Database db, IReadOnlyList<PlotJob> jobs)
-    {
-        var refreshableJobs = jobs.Where(job => !job.IsManualWindow).ToList();
-        if (refreshableJobs.Count == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            var library = TitleBlockLibraryStore.Load();
-            var scanned = TitleBlockScanner.Scan(db, library, refreshableJobs[0].SourceFile);
-
-            foreach (var job in refreshableJobs)
-            {
-                var refreshed = scanned
-                    .Where(x => string.Equals(x.SpaceName, job.SpaceName, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(x.BlockName, job.BlockName, StringComparison.OrdinalIgnoreCase))
-                    .FirstOrDefault(x =>
-                        !string.IsNullOrWhiteSpace(job.BlockHandle)
-                        && string.Equals(x.BlockHandle, job.BlockHandle, StringComparison.OrdinalIgnoreCase))
-                    ?? scanned.FirstOrDefault(x =>
-                        string.Equals(x.SpaceName, job.SpaceName, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(x.BlockName, job.BlockName, StringComparison.OrdinalIgnoreCase)
-                        &&
-                        string.Equals(x.DrawingNumber, job.DrawingNumber, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(x.Title, job.Title, StringComparison.OrdinalIgnoreCase))
-                    ?? scanned.FirstOrDefault(x =>
-                        string.Equals(x.SpaceName, job.SpaceName, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(x.BlockName, job.BlockName, StringComparison.OrdinalIgnoreCase)
-                        && x.MatchIndex == job.MatchIndex);
-
-                if (refreshed == null)
-                {
-                    throw new InvalidOperationException(
-                        $"重新打开图纸后未找到原图框。布局={job.SpaceName}，块={job.BlockName}，句柄={job.BlockHandle}。请重新扫描图纸后再打印。");
-                }
-
-                job.MinX = refreshed.MinX;
-                job.MinY = refreshed.MinY;
-                job.MaxX = refreshed.MaxX;
-                job.MaxY = refreshed.MaxY;
-                job.IsDcsWindow = false;  // 重新扫描后坐标回到 WCS
-                job.PaperName = refreshed.PaperName;
-                job.PaperWidthMm = refreshed.PaperWidthMm;
-                job.PaperHeightMm = refreshed.PaperHeightMm;
-                job.PaperSizeText = refreshed.PaperSizeText;
-                job.ScaleText = refreshed.ScaleText;
-                job.SizeText = refreshed.SizeText;
-            }
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("重新扫描已打开图纸失败，已停止打印以避免输出错误窗口。", ex);
         }
     }
 
