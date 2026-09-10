@@ -147,7 +147,10 @@ public static partial class PlotterService
     private static void RunPlot(PlotInfo plotInfo, string documentName, string outputPath, string sheetName)
     {
         using var engine = PlotFactory.CreatePublishEngine();
-        using var progress = new PlotProgressDialog(false, 1, true);
+        // 批打窗自己显示进度与「停止」时，不再弹出引擎进度框，避免把宿主窗盖住/挤到后面。
+        PlotProgressDialog? progress = BatchPlotHostProgress.SuppressEnginePlotDialog
+            ? null
+            : new PlotProgressDialog(false, 1, true);
         var plotStarted = false;
         var documentStarted = false;
         var sheetStarted = false;
@@ -156,23 +159,26 @@ public static partial class PlotterService
 
         try
         {
-            progress.set_PlotMsgString(PlotMessageIndex.DialogTitle, "批量打印");
-            progress.set_PlotMsgString(PlotMessageIndex.CancelJobButtonMessage, "取消");
-            progress.set_PlotMsgString(PlotMessageIndex.CancelSheetButtonMessage, "取消当前图纸");
-            progress.set_PlotMsgString(PlotMessageIndex.SheetSetProgressCaption, "批量打印进度");
-            progress.set_PlotMsgString(PlotMessageIndex.SheetProgressCaption, sheetName);
-            progress.LowerPlotProgressRange = 0;
-            progress.UpperPlotProgressRange = 100;
-            progress.PlotProgressPos = 0;
-            progress.OnBeginPlot();
-            progress.IsVisible = true;
+            if (progress != null)
+            {
+                progress.set_PlotMsgString(PlotMessageIndex.DialogTitle, "批量打印");
+                progress.set_PlotMsgString(PlotMessageIndex.CancelJobButtonMessage, "取消");
+                progress.set_PlotMsgString(PlotMessageIndex.CancelSheetButtonMessage, "取消当前图纸");
+                progress.set_PlotMsgString(PlotMessageIndex.SheetSetProgressCaption, "批量打印进度");
+                progress.set_PlotMsgString(PlotMessageIndex.SheetProgressCaption, sheetName);
+                progress.LowerPlotProgressRange = 0;
+                progress.UpperPlotProgressRange = 100;
+                progress.PlotProgressPos = 0;
+                progress.OnBeginPlot();
+                progress.IsVisible = true;
+            }
 
             engine.BeginPlot(progress, null);
             plotStarted = true;
             engine.BeginDocument(plotInfo, documentName, null, 1, true, outputPath);
             documentStarted = true;
-            progress.OnBeginSheet();
-            sheetStarted = true;
+            progress?.OnBeginSheet();
+            sheetStarted = progress != null;
 
             using var pageInfo = new PlotPageInfo();
             engine.BeginPage(pageInfo, plotInfo, true, null);
@@ -184,12 +190,20 @@ public static partial class PlotterService
             engine.EndPage(null);
             pageStarted = false;
 
-            progress.OnEndSheet();
-            sheetStarted = false;
+            if (progress != null)
+            {
+                progress.OnEndSheet();
+                sheetStarted = false;
+            }
+
             engine.EndDocument(null);
             documentStarted = false;
-            progress.PlotProgressPos = 100;
-            progress.OnEndPlot();
+            if (progress != null)
+            {
+                progress.PlotProgressPos = 100;
+                progress.OnEndPlot();
+            }
+
             engine.EndPlot(null);
             plotStarted = false;
         }
@@ -197,13 +211,15 @@ public static partial class PlotterService
         {
             if (graphicsStarted) TryPlotCleanup(() => engine.EndGenerateGraphics(null));
             if (pageStarted) TryPlotCleanup(() => engine.EndPage(null));
-            if (sheetStarted) TryPlotCleanup(progress.OnEndSheet);
+            if (sheetStarted && progress != null) TryPlotCleanup(progress.OnEndSheet);
             if (documentStarted) TryPlotCleanup(() => engine.EndDocument(null));
             if (plotStarted)
             {
-                TryPlotCleanup(progress.OnEndPlot);
+                if (progress != null) TryPlotCleanup(progress.OnEndPlot);
                 TryPlotCleanup(() => engine.EndPlot(null));
             }
+
+            progress?.Dispose();
         }
     }
 

@@ -936,6 +936,15 @@ public static class RectangleFrameScanner
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
+    /// 四条独立线端点连接容差：与闭合多段线矩形相同，按边长 0.1%，下限 0.01 图面单位。
+    /// 原先 1e-6 只能吃浮点噪声，模型空间 TRIM 残留缝隙会被漏识别。
+    /// </summary>
+    private static double FourLineEndpointTolerance(double segmentLength)
+    {
+        return Math.Max(0.01, segmentLength * 0.001);
+    }
+
+    /// <summary>
     /// 从独立线段集合中找出由 4 条线段首尾连接而成的矩形。
     ///
     /// 算法：
@@ -954,16 +963,23 @@ public static class RectangleFrameScanner
             return rectangles;
         }
 
-        // 只容纳浮点计算噪声，不允许用较大容差把实际有缝隙的四条线“吸”成闭环。
-        const double endpointTolerance = 0.000001;
-        const int maximumConnectionsAtCorner = 12;
+        var lengths = new double[segments.Count];
+        var maxEndpointTolerance = 0.01;
+        for (var i = 0; i < segments.Count; i++)
+        {
+            lengths[i] = segments[i].Start.DistanceTo(segments[i].End);
+            maxEndpointTolerance = Math.Max(maxEndpointTolerance, FourLineEndpointTolerance(lengths[i]));
+        }
+
+        // 角点附近只取最近若干条连接边，避免放大容差后密集端点造成组合爆炸。
+        const int maximumConnectionsAtCorner = 8;
 
         // ── 第 1 步：把端点写入四叉树 ──
         var minX = segments.Min(segment => Math.Min(segment.Start.X, segment.End.X));
         var minY = segments.Min(segment => Math.Min(segment.Start.Y, segment.End.Y));
         var maxX = segments.Max(segment => Math.Max(segment.Start.X, segment.End.X));
         var maxY = segments.Max(segment => Math.Max(segment.Start.Y, segment.End.Y));
-        var padding = Math.Max(endpointTolerance, Math.Max(maxX - minX, maxY - minY) * 1e-12);
+        var padding = Math.Max(maxEndpointTolerance, Math.Max(maxX - minX, maxY - minY) * 1e-12);
         var endpointTree = new EndpointQuadtree(
             minX - padding,
             minY - padding,
@@ -984,16 +1000,16 @@ public static class RectangleFrameScanner
             return dx * dx + dy * dy + dz * dz <= tol * tol;
         }
 
-        List<int> FindConnected(ISet<int> excludedIndices, Point3d point)
+        List<int> FindConnected(ISet<int> excludedIndices, Point3d point, double tolerance)
         {
-            var result = new List<int>();
+            var candidates = new List<(int Index, double Distance)>();
             var seen = new HashSet<int>();
             var endpoints = new List<SegmentEndpoint>();
             endpointTree.Query(
-                point.X - endpointTolerance,
-                point.Y - endpointTolerance,
-                point.X + endpointTolerance,
-                point.Y + endpointTolerance,
+                point.X - tolerance,
+                point.Y - tolerance,
+                point.X + tolerance,
+                point.Y + tolerance,
                 endpoints);
             foreach (var endpoint in endpoints)
             {
@@ -1004,16 +1020,19 @@ public static class RectangleFrameScanner
                 }
 
                 var segment = segments[segmentIndex];
-                if (IsNear(segment.Start, point, endpointTolerance)
-                    || IsNear(segment.End, point, endpointTolerance))
+                var distance = Math.Min(segment.Start.DistanceTo(point), segment.End.DistanceTo(point));
+                if (distance <= tolerance)
                 {
-                    result.Add(segmentIndex);
-                    // 密集汇聚点容易造成组合爆炸，也不符合常规图框角点特征。
-                    if (result.Count > maximumConnectionsAtCorner)
-                    {
-                        return result;
-                    }
+                    candidates.Add((segmentIndex, distance));
                 }
+            }
+
+            candidates.Sort((left, right) => left.Distance.CompareTo(right.Distance));
+            var take = Math.Min(maximumConnectionsAtCorner, candidates.Count);
+            var result = new List<int>(take);
+            for (var index = 0; index < take; index++)
+            {
+                result.Add(candidates[index].Index);
             }
 
             return result;
@@ -1021,15 +1040,15 @@ public static class RectangleFrameScanner
 
         // 获取线段的"另一端"（与 point 连接的那端的对面端点）
         // 两端都不匹配时返回极远点，让几何验证自动拦截
-        Point3d OtherEnd(int segIndex, Point3d point)
+        Point3d OtherEnd(int segIndex, Point3d point, double tolerance)
         {
             var s = segments[segIndex];
-            if (IsNear(s.Start, point, endpointTolerance))
+            if (IsNear(s.Start, point, tolerance))
             {
                 return s.End;
             }
 
-            if (IsNear(s.End, point, endpointTolerance))
+            if (IsNear(s.End, point, tolerance))
             {
                 return s.Start;
             }
@@ -1042,41 +1061,47 @@ public static class RectangleFrameScanner
 
         void ExploreCycle(int i1, Point3d pointA, Point3d pointB)
         {
-            var connectedAtB = FindConnected(new HashSet<int> { i1 }, pointB);
-            if (connectedAtB.Count > maximumConnectionsAtCorner)
-            {
-                return;
-            }
+            var toleranceAtB = FourLineEndpointTolerance(lengths[i1]);
+            var connectedAtB = FindConnected(new HashSet<int> { i1 }, pointB, toleranceAtB);
 
             foreach (var i2 in connectedAtB)
             {
-                var pointC = OtherEnd(i2, pointB);
+                var joinTolerance12 = Math.Max(toleranceAtB, FourLineEndpointTolerance(lengths[i2]));
+                var pointC = OtherEnd(i2, pointB, joinTolerance12);
+                var toleranceAtC = FourLineEndpointTolerance(lengths[i2]);
                 var usedAfterSecond = new HashSet<int> { i1, i2 };
-                var connectedAtC = FindConnected(usedAfterSecond, pointC);
-                if (connectedAtC.Count > maximumConnectionsAtCorner)
-                {
-                    continue;
-                }
+                var connectedAtC = FindConnected(usedAfterSecond, pointC, toleranceAtC);
 
                 foreach (var i3 in connectedAtC)
                 {
-                    var pointD = OtherEnd(i3, pointC);
+                    var joinTolerance23 = Math.Max(toleranceAtC, FourLineEndpointTolerance(lengths[i3]));
+                    var pointD = OtherEnd(i3, pointC, joinTolerance23);
+                    var toleranceAtD = FourLineEndpointTolerance(lengths[i3]);
                     var usedAfterThird = new HashSet<int> { i1, i2, i3 };
-                    var connectedAtD = FindConnected(usedAfterThird, pointD);
-                    if (connectedAtD.Count > maximumConnectionsAtCorner)
-                    {
-                        continue;
-                    }
+                    var connectedAtD = FindConnected(usedAfterThird, pointD, toleranceAtD);
 
                     foreach (var i4 in connectedAtD)
                     {
-                        var backToA = OtherEnd(i4, pointD);
-                        if (!IsNear(backToA, pointA, endpointTolerance))
+                        var joinTolerance34 = Math.Max(toleranceAtD, FourLineEndpointTolerance(lengths[i4]));
+                        var backToA = OtherEnd(i4, pointD, joinTolerance34);
+                        var closeTolerance = Math.Max(
+                            FourLineEndpointTolerance(lengths[i4]),
+                            FourLineEndpointTolerance(lengths[i1]));
+                        if (!IsNear(backToA, pointA, closeTolerance))
                         {
                             continue;
                         }
 
-                        var corners = new[] { pointA, pointB, pointC, pointD };
+                        // 端点可能有缝隙或过接，角点改用相邻两边交点，避免把缺口带进矩形校验。
+                        if (!TryIntersectLines(segments[i4], segments[i1], out var cornerA)
+                            || !TryIntersectLines(segments[i1], segments[i2], out var cornerB)
+                            || !TryIntersectLines(segments[i2], segments[i3], out var cornerC)
+                            || !TryIntersectLines(segments[i3], segments[i4], out var cornerD))
+                        {
+                            continue;
+                        }
+
+                        var corners = new[] { cornerA, cornerB, cornerC, cornerD };
                         if (!TryBuildRectangleFromCorners(corners, out var rectangle))
                         {
                             continue;
@@ -1106,6 +1131,25 @@ public static class RectangleFrameScanner
         }
 
         return rectangles;
+    }
+
+    /// <summary>求两条直线的无限延长线交点；平行或重合时返回 false。</summary>
+    private static bool TryIntersectLines(LineSegment a, LineSegment b, out Point3d intersection)
+    {
+        intersection = new Point3d();
+        var dx1 = a.End.X - a.Start.X;
+        var dy1 = a.End.Y - a.Start.Y;
+        var dx2 = b.End.X - b.Start.X;
+        var dy2 = b.End.Y - b.Start.Y;
+        var denom = dx1 * dy2 - dy1 * dx2;
+        if (Math.Abs(denom) < 1e-12)
+        {
+            return false;
+        }
+
+        var t = ((b.Start.X - a.Start.X) * dy2 - (b.Start.Y - a.Start.Y) * dx2) / denom;
+        intersection = new Point3d(a.Start.X + t * dx1, a.Start.Y + t * dy1, 0);
+        return true;
     }
 
     /// <summary>

@@ -60,7 +60,7 @@
                         <GroupBox Header="矩形框识别" Margin="0,0,0,4" Padding="8">
                             <CheckBox x:Name="_recognizeFourLineRectangleFrames"
                                       Content="识别四条直线或直线型 PL 首尾相连组成的矩形框"
-                                      ToolTip="仅在四个独立实体的端点严格首尾相连并通过矩形几何校验时识别；后续沿用原有 PL 矩形框打印流程。" />
+                                      ToolTip="四个独立实体的端点在边长 0.1% 容差内视为相连，并通过矩形几何校验后识别；后续沿用原有 PL 矩形框打印流程。" />
                         </GroupBox>
 
                         <GroupBox Header="打印行为" Margin="0,0,0,4" Padding="8">

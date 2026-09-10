@@ -151,6 +151,11 @@ public sealed partial class RectangleBatchPlotForm : Window
         _leaveMargin.IsChecked = _settings.LeavePaperMargin;
         _mergePdf.IsChecked = _settings.MergePdf;
         LoadPlotOptions();
+        Closing += (_, _) =>
+        {
+            // 关闭时若仍在打印，先请求取消，避免后台继续跑。
+            _printCts?.Cancel();
+        };
     }
 
     private void InitializeGrid()
@@ -1014,6 +1019,8 @@ public sealed partial class RectangleBatchPlotForm : Window
         AppendPrintLog(
             "INFO",
             $"开始通用型批量打印；共={selected.Count}；格式={SelectedOutputFormat}；设备={device}；打印样式={SelectedStyle()}");
+        var wasTopmost = Topmost;
+        BatchPlotHostProgress.Begin();
         try
         {
             // 切换按钮为"停止"状态
@@ -1021,6 +1028,10 @@ public sealed partial class RectangleBatchPlotForm : Window
             _printButton.Content = "停止";
             _printButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 40, 40));
             _printButton.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(160, 30, 30));
+            // 打印期间置顶并保持可见，方便点「停止」；同时抑制 CAD 引擎进度框盖窗。
+            Visibility = System.Windows.Visibility.Visible;
+            Topmost = true;
+            Activate();
 
             if (mergePdf)
             {
@@ -1047,6 +1058,8 @@ public sealed partial class RectangleBatchPlotForm : Window
                     AppendPrintLog(
                         "INFO",
                         $"开始打印 {completed}/{selected.Count}；源文件={job.SourceFile}；布局={job.SpaceName}；输出={finalOutput}");
+                    Visibility = System.Windows.Visibility.Visible;
+                    Activate();
                     Pump();
                 },
                 cancellationToken: _printCts.Token);
@@ -1139,6 +1152,8 @@ public sealed partial class RectangleBatchPlotForm : Window
             _printButton.Content = "开始打印";
             _printButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 215));
             _printButton.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 95, 170));
+            Topmost = wasTopmost;
+            BatchPlotHostProgress.End();
 
             foreach (var pair in originalPaths)
             {
@@ -1739,6 +1754,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             if (!form.RequestPickDirectoryRowHeight
                 && !form.RequestPickDirectoryTextAppearance
+                && !form.RequestPickScaleFromCad
                 && string.IsNullOrWhiteSpace(form.RequestedDirectoryColumnKey))
             {
                 if (recognitionSettingsChanged)
@@ -1752,6 +1768,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             tabIndex = form.SelectedTabIndex;
             Hide();
             Pump();
+            var scalesChangedByPick = false;
             try
             {
                 var document = GetActiveCadDocument();
@@ -1768,7 +1785,14 @@ public sealed partial class RectangleBatchPlotForm : Window
                 var settings = AppSettingsStore.Load();
                 bool ok;
                 string message;
-                if (form.RequestPickDirectoryTextAppearance)
+                if (form.RequestPickScaleFromCad)
+                {
+                    // 与目录「图中交互」同一套路：设置窗已关，回到 CAD 框选后再重开比例页。
+                    ok = ScaleSettingsPicker.PromptScaleFromFrame(document, settings, out settings, out message);
+                    scalesChangedByPick = !ScalesEqual(_settings.CustomScales, settings.CustomScales);
+                    _settings.CustomScales = settings.CustomScales;
+                }
+                else if (form.RequestPickDirectoryTextAppearance)
                 {
                     ok = DirectoryTableGenerator.PromptTextAppearance(document, settings, out _, out message);
                 }
@@ -1796,6 +1820,11 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 Show();
                 Activate();
+                // 拾取已写入磁盘并同步内存；此处立刻重扫，避免用户再点保存时因列表已同步而漏掉 ReloadFrames。
+                if (scalesChangedByPick)
+                {
+                    ReloadFrames();
+                }
             }
         }
     }

@@ -343,7 +343,11 @@ public sealed partial class SettingsForm : Window
         LoadTextStyles();
 
         _directoryColumnsGrid.ItemsSource = _directoryRows;
-        _pickRowHeightButton.IsEnabled = GetActiveDocument() != null;
+        // 无活动图纸时禁用全部 CAD 拾取入口，避免点了只关窗、看起来像“没反应”。
+        var hasDocument = GetActiveDocument() != null;
+        _pickRowHeightButton.IsEnabled = hasDocument;
+        _pickTextAppearanceButton.IsEnabled = hasDocument;
+        _pickScaleButton.IsEnabled = hasDocument;
 
         Closing += (_, _) =>
         {

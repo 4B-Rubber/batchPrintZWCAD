@@ -688,7 +688,8 @@ public static class CadTextExtractor
             return true;
         }
 
-        return false;
+        // 天正单行/多行不是 DBText/MText，走 EntGet 组码 0/1/10。
+        return TianzhengTextReader.TryGetText(entity, out text, out point);
     }
 
     private static void CollectDefinitionText(

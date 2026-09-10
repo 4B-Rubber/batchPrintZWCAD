@@ -50,6 +50,8 @@ public sealed partial class BatchPlotCommands
             var blockOptions = new PromptEntityOptions("\n选择要加入图框库的图框块: ");
             blockOptions.SetRejectMessage("\n请选择普通块参照。");
             blockOptions.AddAllowedClass(typeof(BlockReference), exactMatch: false);
+            // 图框常放在锁定图层上防误改；入库只读块定义，允许点选锁定层上的块。
+            blockOptions.AllowObjectOnLockedLayer = true;
             var blockResult = editor.GetEntity(blockOptions);
             AddBlockLog("Block prompt status: " + blockResult.Status);
             if (blockResult.Status != PromptStatus.OK)

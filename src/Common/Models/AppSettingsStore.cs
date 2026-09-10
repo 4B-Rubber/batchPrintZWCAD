@@ -58,9 +58,9 @@ public sealed class AppSettings
     public Dictionary<string, string> CommandAliases { get; set; } = new();
     /// <summary>
     /// 矩形框批打是否识别由 4 个独立直线实体或直线型开放 PL 首尾相连组成的矩形。
-    /// 默认关闭，避免改变既有图纸的扫描结果。
+    /// 默认开启；旧配置若未写入该字段，加载后也会按默认勾选。
     /// </summary>
-    public bool RecognizeFourLineRectangleFrames { get; set; }
+    public bool RecognizeFourLineRectangleFrames { get; set; } = true;
     /// <summary>
     /// 正式打印时是否把打印内容四边各裁 1mm 纸面，使图框外边框不再输出。
     /// 首次使用默认关闭；裁切不改纸张、比例和留白，也不修改 DWG。

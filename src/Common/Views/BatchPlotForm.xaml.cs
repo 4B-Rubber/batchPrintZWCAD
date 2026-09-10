@@ -1607,6 +1607,7 @@ public sealed partial class BatchPlotForm : Window
 
             if (!form.RequestPickDirectoryRowHeight
                 && !form.RequestPickDirectoryTextAppearance
+                && !form.RequestPickScaleFromCad
                 && string.IsNullOrWhiteSpace(form.RequestedDirectoryColumnKey))
             {
                 tabIndex = form.SelectedTabIndex;
@@ -1614,10 +1615,17 @@ public sealed partial class BatchPlotForm : Window
             }
 
             tabIndex = form.SelectedTabIndex;
-            PickDirectorySettingFromCad(
-                form.RequestPickDirectoryRowHeight,
-                form.RequestPickDirectoryTextAppearance,
-                form.RequestedDirectoryColumnKey);
+            if (form.RequestPickScaleFromCad)
+            {
+                PickScaleSettingFromCad();
+            }
+            else
+            {
+                PickDirectorySettingFromCad(
+                    form.RequestPickDirectoryRowHeight,
+                    form.RequestPickDirectoryTextAppearance,
+                    form.RequestedDirectoryColumnKey);
+            }
         }
     }
 
@@ -1679,6 +1687,33 @@ public sealed partial class BatchPlotForm : Window
                     out _,
                     out message);
             }
+            ReloadSettings();
+            AppendLog(ok ? "INFO" : "WARN", message);
+            System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        finally
+        {
+            CadWindowFocus.RestoreDialog(this);
+        }
+    }
+
+    /// <summary>与目录「图中交互」相同：先隐藏批打窗，再框选图框反推比例。</summary>
+    private void PickScaleSettingFromCad()
+    {
+        CadWindowFocus.HideForCadInput(this);
+        try
+        {
+            var document = GetActiveCadDocument();
+            if (document == null)
+            {
+                const string noDocumentMessage = "当前没有可用的 CAD 图纸，请先打开图纸后重试。";
+                AppendLog("WARN", noDocumentMessage);
+                System.Windows.MessageBox.Show(noDocumentMessage, "批量打印设置", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var settings = AppSettingsStore.Load();
+            var ok = ScaleSettingsPicker.PromptScaleFromFrame(document, settings, out _, out var message);
             ReloadSettings();
             AppendLog(ok ? "INFO" : "WARN", message);
             System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
@@ -1993,16 +2028,21 @@ public sealed partial class BatchPlotForm : Window
         _printButton.Background = new SolidColorBrush(Color.FromRgb(200, 40, 40));
         _printButton.BorderBrush = new SolidColorBrush(Color.FromRgb(160, 30, 30));
         _printButton.IsEnabled = true;
-        Activate();
-
-        void PumpMessages()
-        {
-            // 原 Application.DoEvents：处理完挂起的 UI 消息后再继续。
-            Dispatcher.Invoke(DispatcherPriority.Background, new Action(() => { }));
-        }
-
+        var wasTopmost = Topmost;
+        BatchPlotHostProgress.Begin();
         try
         {
+            // 打印期间置顶并保持可见，方便点「停止」；同时抑制 CAD 引擎进度框盖窗。
+            Visibility = System.Windows.Visibility.Visible;
+            Topmost = true;
+            Activate();
+
+            void PumpMessages()
+            {
+                // 原 Application.DoEvents：处理完挂起的 UI 消息后再继续。
+                Dispatcher.Invoke(DispatcherPriority.Background, new Action(() => { }));
+            }
+
             var failed = new List<string>();
             PrepareCustomPaperRegistrations(selected, device);
             if (mergePdf)
@@ -2032,6 +2072,8 @@ public sealed partial class BatchPlotForm : Window
                     AppendLog(
                         "INFO",
                         $"开始打印 {job.DrawingNumber}_{job.Title}；源文件={job.SourceFile}；布局={job.SpaceName}；输出={job.OutputPath}");
+                    Visibility = System.Windows.Visibility.Visible;
+                    Activate();
                     PumpMessages();
                 },
                 _printCts.Token);
@@ -2157,6 +2199,8 @@ public sealed partial class BatchPlotForm : Window
             _printButton.Content = "开始打印";
             _printButton.Background = new SolidColorBrush(Color.FromRgb(0, 120, 215));
             _printButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 95, 170));
+            Topmost = wasTopmost;
+            BatchPlotHostProgress.End();
 
             RefreshStatus();
         }
