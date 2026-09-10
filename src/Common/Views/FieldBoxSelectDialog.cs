@@ -275,21 +275,32 @@ public sealed class FieldBoxSelectDialog : Form
     }
 
     /// <summary>
-    /// 对话框每次重新显示时（例如从 CAD 框选取点后返回），刷新所有已选字段的临时红色标识。
-    /// 确保用户始终能看到自己已选择了哪些区域。
+    /// 根据已存储的世界坐标角点，重新绘制所有已选字段及打印范围的临时红色标识。
+    /// 批量写入后只刷屏一次，避免逐框 UpdateScreen 造成连续闪烁。
+    /// </summary>
+    private void RefreshAllMarkers()
+    {
+        // 外框标识：不显示文字标签，避免外框过大时文字遮挡图面。
+        _markers.SetBox("外框", _printAreaCorners.Corner1, _printAreaCorners.Corner2, null, refresh: false);
+        foreach (var kv in _fieldCorners)
+        {
+            _markers.SetBox(kv.Key, kv.Value.Corner1, kv.Value.Corner2, kv.Key, refresh: false);
+        }
+
+        _markers.RefreshDisplay();
+    }
+
+    /// <summary>
+    /// 从 CAD 框选返回后对话框重新 Visible。DirectTopmost 临时图素通常仍在，
+    /// 这里不再整批重建/刷屏，避免每次点「框选」Hide→Show 时屏幕闪一下。
     /// </summary>
     protected override void OnVisibleChanged(EventArgs e)
     {
         base.OnVisibleChanged(e);
-        if (Visible)
-        {
-            RefreshAllMarkers();
-        }
     }
 
     /// <summary>
     /// CAD 模态窗口建立自己的消息循环后再强制重绘一次，确保窗口首次出现时红色打印范围已经可见。
-    /// OnVisibleChanged 继续负责从 CAD 框选返回后的刷新，两者职责不同。
     /// </summary>
     protected override void OnShown(EventArgs e)
     {
@@ -299,24 +310,14 @@ public sealed class FieldBoxSelectDialog : Form
     }
 
     /// <summary>
-    /// 根据已存储的世界坐标角点，重新绘制所有已选字段及打印范围的临时红色标识。
-    /// </summary>
-    private void RefreshAllMarkers()
-    {
-        // 外框标识：不显示文字标签，避免外框过大时文字遮挡图面。
-        _markers.SetBox("外框", _printAreaCorners.Corner1, _printAreaCorners.Corner2, null);
-        foreach (var kv in _fieldCorners)
-        {
-            _markers.SetBox(kv.Key, kv.Value.Corner1, kv.Value.Corner2, kv.Key);
-        }
-    }
-
-    /// <summary>
     /// 重新框选打印范围。用户可在 CAD 中手动框选以修正自动识别的外包框。
     /// </summary>
     private void SelectPrintArea()
     {
-        CadWindowFocus.HideForCadInput(this);
+        double detectedWidth = 0;
+        double detectedHeight = 0;
+        var picked = false;
+        BeginCadPick();
         try
         {
             var first = _editor.GetPoint(new PromptPointOptions("\n框选图框打印外边界第一个角点: "));
@@ -344,20 +345,26 @@ public sealed class FieldBoxSelectDialog : Form
             _markers.SetBox("外框", first.Value, second.Value, null);
             UpdatePrintAreaStatus();
 
-            // 打印范围变化后重新识别纸张，与原独立纸张界面使用最终外框检测的行为一致。
-            // 识别不到标准纸张时要求用户输入绘图比例（对话框内嵌套弹窗，owner 传 this 保证置顶）。
-            var detectedWidth = Math.Abs(second.Value.X - first.Value.X);
-            var detectedHeight = Math.Abs(second.Value.Y - first.Value.Y);
-            ApplyPaperOptions(ArbitraryPaperPicker.DetectCandidatesOrPrompt(
-                detectedWidth,
-                detectedHeight,
-                _paperDetectionOptions,
-                this));
+            detectedWidth = Math.Abs(second.Value.X - first.Value.X);
+            detectedHeight = Math.Abs(second.Value.Y - first.Value.Y);
+            picked = true;
         }
         finally
         {
-            CadWindowFocus.RestoreDialog(this);
+            EndCadPick();
         }
+
+        if (!picked)
+        {
+            return;
+        }
+
+        // 恢复窗体后再做纸张识别/弹窗，避免透明禁用态下嵌套对话框异常。
+        ApplyPaperOptions(ArbitraryPaperPicker.DetectCandidatesOrPrompt(
+            detectedWidth,
+            detectedHeight,
+            _paperDetectionOptions,
+            this));
     }
 
     /// <summary>
@@ -424,7 +431,7 @@ public sealed class FieldBoxSelectDialog : Form
     private bool TryBoxSelect(string fieldName, out LocalRectangle region)
     {
         region = new LocalRectangle();
-        CadWindowFocus.HideForCadInput(this);
+        BeginCadPick();
         try
         {
             var firstPrompt = $"框选{fieldName}区域第一个角点，或右键跳过: ";
@@ -457,8 +464,29 @@ public sealed class FieldBoxSelectDialog : Form
         }
         finally
         {
-            CadWindowFocus.RestoreDialog(this);
+            EndCadPick();
         }
+    }
+
+    /// <summary>
+    /// 框选前让出 CAD 输入：透明+禁用，避免 Hide/Show 整窗拆装造成图面闪烁。
+    /// 若个别 CAD 仍抢不到点，再回退到 <see cref="CadWindowFocus.HideForCadInput"/>。
+    /// </summary>
+    private void BeginCadPick()
+    {
+        Enabled = false;
+        Opacity = 0;
+        CadWindowFocus.ActivateCadWindow();
+        System.Windows.Forms.Application.DoEvents();
+    }
+
+    /// <summary>框选结束后恢复录入窗。</summary>
+    private void EndCadPick()
+    {
+        Opacity = 1;
+        Enabled = true;
+        BringToFront();
+        Activate();
     }
 
     private static void UpdateStatus(Label label, LocalRectangle region)

@@ -1689,7 +1689,11 @@ public sealed partial class BatchPlotForm : Window
             }
             ReloadSettings();
             AppendLog(ok ? "INFO" : "WARN", message);
-            System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            // 成功后设置页会重开并显示新值，不必再弹“已设置”；失败/取消仍提示。
+            if (!ok)
+            {
+                System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         finally
         {
@@ -1716,7 +1720,10 @@ public sealed partial class BatchPlotForm : Window
             var ok = ScaleSettingsPicker.PromptScaleFromFrame(document, settings, out _, out var message);
             ReloadSettings();
             AppendLog(ok ? "INFO" : "WARN", message);
-            System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            if (!ok)
+            {
+                System.Windows.MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
         finally
         {
@@ -2030,12 +2037,17 @@ public sealed partial class BatchPlotForm : Window
         _printButton.IsEnabled = true;
         var wasTopmost = Topmost;
         BatchPlotHostProgress.Begin();
+        BatchPrintProgressSession? progress = null;
         try
         {
             // 打印期间置顶并保持可见，方便点「停止」；同时抑制 CAD 引擎进度框盖窗。
             Visibility = System.Windows.Visibility.Visible;
             Topmost = true;
             Activate();
+            progress = BatchPrintProgressSession.Start(
+                this,
+                selected.Count,
+                () => _printCts?.Cancel());
 
             void PumpMessages()
             {
@@ -2057,6 +2069,7 @@ public sealed partial class BatchPlotForm : Window
             }
 
             _statusLabel.Text = $"打印中... 0 / {selected.Count}";
+            progress.Report(0, selected.Count, "准备自定义纸张与输出路径…");
             PumpMessages();
 
             var results = PlotterService.PlotMany(
@@ -2069,6 +2082,12 @@ public sealed partial class BatchPlotForm : Window
                 {
                     completed++;
                     _statusLabel.Text = $"打印中... {completed} / {selected.Count}";
+                    var detail =
+                        $"第 {completed} / {selected.Count} 张\n" +
+                        $"{job.DrawingNumber}_{job.Title}\n" +
+                        $"布局：{job.SpaceName}\n" +
+                        $"输出：{System.IO.Path.GetFileName(job.OutputPath)}";
+                    progress.Report(completed, selected.Count, detail);
                     AppendLog(
                         "INFO",
                         $"开始打印 {job.DrawingNumber}_{job.Title}；源文件={job.SourceFile}；布局={job.SpaceName}；输出={job.OutputPath}");
@@ -2107,6 +2126,7 @@ public sealed partial class BatchPlotForm : Window
                 try
                 {
                     _statusLabel.Text = "正在合并 PDF...";
+                    progress?.SetPhase("正在合并 PDF…", "请稍候，合并完成后会自动关闭进度窗口。");
                     PumpMessages();
                     var mergeInputs = selected.Select(job => new PdfMergeInput(
                         job.OutputPath,
@@ -2200,6 +2220,8 @@ public sealed partial class BatchPlotForm : Window
             _printButton.Background = new SolidColorBrush(Color.FromRgb(0, 120, 215));
             _printButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 95, 170));
             Topmost = wasTopmost;
+            progress?.Dispose();
+            progress = null;
             BatchPlotHostProgress.End();
 
             RefreshStatus();

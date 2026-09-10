@@ -1021,6 +1021,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             $"开始通用型批量打印；共={selected.Count}；格式={SelectedOutputFormat}；设备={device}；打印样式={SelectedStyle()}");
         var wasTopmost = Topmost;
         BatchPlotHostProgress.Begin();
+        BatchPrintProgressSession? progress = null;
         try
         {
             // 切换按钮为"停止"状态
@@ -1032,6 +1033,10 @@ public sealed partial class RectangleBatchPlotForm : Window
             Visibility = System.Windows.Visibility.Visible;
             Topmost = true;
             Activate();
+            progress = BatchPrintProgressSession.Start(
+                this,
+                selected.Count,
+                () => _printCts?.Cancel());
 
             if (mergePdf)
             {
@@ -1044,6 +1049,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             }
 
             _status.Text = $"打印中... 0 / {selected.Count}";
+            progress.Report(0, selected.Count, "准备自定义纸张与输出路径…");
             Pump();
 
             // 汇总本批所有任意加长尺寸后只更新一次实际 PMP，再进入连续打印。
@@ -1055,6 +1061,11 @@ public sealed partial class RectangleBatchPlotForm : Window
                     completed++;
                     _status.Text = $"打印中... {completed} / {selected.Count}";
                     var finalOutput = originalPaths.TryGetValue(job, out var path) ? path : job.OutputPath;
+                    var detail =
+                        $"第 {completed} / {selected.Count} 张\n" +
+                        $"布局：{job.SpaceName}\n" +
+                        $"输出：{System.IO.Path.GetFileName(finalOutput)}";
+                    progress.Report(completed, selected.Count, detail);
                     AppendPrintLog(
                         "INFO",
                         $"开始打印 {completed}/{selected.Count}；源文件={job.SourceFile}；布局={job.SpaceName}；输出={finalOutput}");
@@ -1085,6 +1096,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             if (mergePdf)
             {
                 _status.Text = "正在合并 PDF...";
+                progress?.SetPhase("正在合并 PDF…", "请稍候，合并完成后会自动关闭进度窗口。");
                 Pump();
                 var mergeInputs = selected.Select(job => new PdfMergeInput(
                     job.OutputPath,
@@ -1153,6 +1165,8 @@ public sealed partial class RectangleBatchPlotForm : Window
             _printButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 215));
             _printButton.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 95, 170));
             Topmost = wasTopmost;
+            progress?.Dispose();
+            progress = null;
             BatchPlotHostProgress.End();
 
             foreach (var pair in originalPaths)
@@ -1768,7 +1782,6 @@ public sealed partial class RectangleBatchPlotForm : Window
             tabIndex = form.SelectedTabIndex;
             Hide();
             Pump();
-            var scalesChangedByPick = false;
             try
             {
                 var document = GetActiveCadDocument();
@@ -1788,8 +1801,8 @@ public sealed partial class RectangleBatchPlotForm : Window
                 if (form.RequestPickScaleFromCad)
                 {
                     // 与目录「图中交互」同一套路：设置窗已关，回到 CAD 框选后再重开比例页。
+                    // 只写入自定义比例，不自动重扫；需要新比例生效时由用户自行扫描。
                     ok = ScaleSettingsPicker.PromptScaleFromFrame(document, settings, out settings, out message);
-                    scalesChangedByPick = !ScalesEqual(_settings.CustomScales, settings.CustomScales);
                     _settings.CustomScales = settings.CustomScales;
                 }
                 else if (form.RequestPickDirectoryTextAppearance)
@@ -1810,21 +1823,16 @@ public sealed partial class RectangleBatchPlotForm : Window
                         out message);
                 }
 
-                MessageBox.Show(
-                    message,
-                    "批量打印设置",
-                    MessageBoxButton.OK,
-                    ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                // 成功后设置页会重开并显示新值，不必再弹“已设置”；失败/取消仍提示。
+                if (!ok)
+                {
+                    MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             }
             finally
             {
                 Show();
                 Activate();
-                // 拾取已写入磁盘并同步内存；此处立刻重扫，避免用户再点保存时因列表已同步而漏掉 ReloadFrames。
-                if (scalesChangedByPick)
-                {
-                    ReloadFrames();
-                }
             }
         }
     }

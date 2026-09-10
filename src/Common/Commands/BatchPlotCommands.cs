@@ -208,7 +208,12 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
                     out _,
                     out message);
             }
-            MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            // 成功后设置页会重开并显示新值，不必再弹“已设置”提示；失败/取消仍提示。
+            if (!ok)
+            {
+                MessageBox.Show(message, "批量打印设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
             // 每次 CAD 取样后重新打开设置页，支持连续调整目录行高和多个列宽。
         }
     }

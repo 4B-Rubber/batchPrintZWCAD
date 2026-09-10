@@ -61,9 +61,9 @@ internal static class CadWindowFocus
     public static void HideForCadInput(Form form)
     {
         form.Hide();
+        // 只抢一次前台 + 一次消息泵；原先二次 Activate 容易造成图面多闪一下。
         ActivateCadWindow();
         System.Windows.Forms.Application.DoEvents();
-        ActivateCadWindow();
     }
 
     /// <summary>隐藏 WPF 插件窗并立即把输入焦点交给 CAD。</summary>
@@ -72,13 +72,11 @@ internal static class CadWindowFocus
         window.Hide();
         ActivateCadWindow();
         System.Windows.Forms.Application.DoEvents();
-        ActivateCadWindow();
     }
 
     /// <summary>CAD 取点结束后恢复 WinForms 窗体。</summary>
     public static void RestoreDialog(Form form)
     {
-        ActivateCadWindow();
         form.Visible = true;
         form.BringToFront();
         form.Activate();
@@ -87,7 +85,6 @@ internal static class CadWindowFocus
     /// <summary>CAD 取点结束后恢复 WPF 窗体。</summary>
     public static void RestoreDialog(Window window)
     {
-        ActivateCadWindow();
         window.Visibility = Visibility.Visible;
         window.BringToFrontHwnd();
         window.Activate();

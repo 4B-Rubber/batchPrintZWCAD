@@ -46,9 +46,10 @@ public sealed class TransientFrameMarkers : IDisposable
     /// 以世界坐标两角点设置某个标识（红色矩形 + 对角线 + 居中文字）。
     /// 同名字段重复调用时先移除旧标识，实现"重新框选即替换"。
     /// </summary>
-    public void SetBox(string key, Point3d corner1, Point3d corner2, string? label)
+    /// <param name="refresh">为 false 时跳过刷屏，便于调用方批量改完后只刷新一次。</param>
+    public void SetBox(string key, Point3d corner1, Point3d corner2, string? label, bool refresh = true)
     {
-        Remove(key);
+        Remove(key, refresh: false);
 
         var entities = BuildBoxEntities(corner1, corner2, label);
         var subSystemId = GetSubSystemId(key);
@@ -61,13 +62,17 @@ public sealed class TransientFrameMarkers : IDisposable
         }
 
         _markers[key] = entities;
-        RefreshDisplay();
+        if (refresh)
+        {
+            RefreshDisplay();
+        }
     }
 
     /// <summary>
     /// 移除某个字段的临时标识（如点击"清除"）。
     /// </summary>
-    public void Remove(string key)
+    /// <param name="refresh">为 false 时跳过刷屏，便于调用方批量改完后只刷新一次。</param>
+    public void Remove(string key, bool refresh = true)
     {
         if (!_markers.TryGetValue(key, out var entities))
         {
@@ -82,7 +87,10 @@ public sealed class TransientFrameMarkers : IDisposable
         }
 
         _markers.Remove(key);
-        RefreshDisplay();
+        if (refresh)
+        {
+            RefreshDisplay();
+        }
     }
 
     /// <summary>
@@ -112,8 +120,10 @@ public sealed class TransientFrameMarkers : IDisposable
     {
         foreach (var key in new List<string>(_markers.Keys))
         {
-            Remove(key);
+            Remove(key, refresh: false);
         }
+
+        RefreshDisplay();
     }
 
     public void Dispose() => Clear();
