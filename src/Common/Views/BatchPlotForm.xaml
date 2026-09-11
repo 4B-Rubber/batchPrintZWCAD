@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:ZwcadBatchPlot"
         x:Class="ZwcadBatchPlot.BatchPlotForm"
-        Title="LA图框块批量打印 V1.15.6.4"
+        Title="LA图框块批量打印 V1.15.7"
         Width="900" Height="520"
         MinWidth="720" MinHeight="460"
         WindowStartupLocation="CenterScreen"
@@ -142,7 +142,7 @@
                           ToolTip="勾选后合并临时单页；可在批量打印设置中启用文件名书签或按纸张大小分别合并。" />
                 <CheckBox x:Name="_leaveMarginCheckBox" Content="周边留白" VerticalAlignment="Center"
                           Margin="12,0,12,0" Checked="LeaveMargin_CheckedChanged" Unchecked="LeaveMargin_CheckedChanged"
-                          ToolTip="勾选后按设定距离留白。正数=扩大纸张（比例不变）；负数=缩小比例。" />
+                          ToolTip="勾选后按设定距离留白。PDF/DWF/PNG/JPG 均支持：正数=扩大纸张（比例不变）；负数=缩小比例。" />
                 <ComboBox x:Name="_marginInput" Width="68" IsEditable="False"
                           VerticalContentAlignment="Center" Margin="0,0,2,0"
                           SelectionChanged="MarginInput_SelectionChanged" />

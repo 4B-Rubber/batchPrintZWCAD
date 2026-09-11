@@ -72,8 +72,27 @@
                                           ToolTip="勾选后按对象透明度输出，对应 CAD 打印对话框中的“打印透明度”；默认开启。" />
                                 <CheckBox x:Name="_generatePrintLog" Content="生成打印日志" Margin="0,0,0,2" />
                                 <CheckBox x:Name="_convertTextToGeometryWhenPlotting" Content="文字自动转图形打印"
-                                          ToolTip="勾选后，PDF/DWF 输出会把 TrueType 文字转换为图形轮廓，避免接收方缺少字体；不会炸开或修改原 DWG 文字。PNG/JPG 本身已是图像输出。默认关闭。" />
+                                          ToolTip="勾选后，PDF/DWF/PNG/JPG 输出会把 TrueType 文字转换为图形轮廓，避免接收方缺少字体；不会炸开或修改原 DWG 文字。默认关闭。" />
                             </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="PNG/JPG 输出" Margin="0,0,0,4" Padding="8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="145" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="转图分辨率(DPI)" VerticalAlignment="Center"
+                                           ToolTip="仅影响 PNG/JPG：由临时 PDF 转成图片时的像素密度。PDF 为矢量，不受此项影响。" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <local:NumberBox x:Name="_rasterExportDpi"
+                                                     Min="72" Max="600" Increment="10" Decimals="0"
+                                                     Width="130" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                     ToolTip="默认 150。数值越大越清晰、文件也越大；允许范围 72–600。" />
+                                    <TextBlock Text="默认 150，范围 72–600" Foreground="DimGray"
+                                               VerticalAlignment="Center" Margin="8,0,0,0" />
+                                </StackPanel>
+                            </Grid>
                         </GroupBox>
 
                         <GroupBox Header="输出文件" Margin="0,0,0,4" Padding="8">

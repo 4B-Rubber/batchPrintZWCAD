@@ -89,6 +89,15 @@ public sealed class AppSettings
     /// 正式打印时是否输出对象透明度。默认开启，对应 CAD 打印对话框中的“打印透明度”。
     /// </summary>
     public bool PlotTransparency { get; set; } = true;
+    /// <summary>
+    /// PNG/JPG 由临时 PDF 转图时使用的分辨率（DPI）。默认 150。
+    /// 在批量打印设置「常规」中编辑；非法值在加载时回落到默认。
+    /// </summary>
+    public int RasterExportDpi { get; set; } = RasterExportSettings.DefaultDpi;
+    /// <summary>
+    /// JPG 转图质量（1–100）。默认 90。界面尚未提供设置项，后续可直接绑定本字段。
+    /// </summary>
+    public int RasterExportJpegQuality { get; set; } = RasterExportSettings.DefaultJpegQuality;
     public bool AddFileNameSequence { get; set; }
     public bool LeavePaperMargin { get; set; }
     public double PaperMarginMm { get; set; } = 1;
@@ -334,6 +343,8 @@ public static class AppSettingsStore
         }
 
         settings.CustomScales = NormalizeCustomScales(settings.CustomScales);
+        settings.RasterExportDpi = RasterExportSettings.NormalizeDpi(settings.RasterExportDpi);
+        settings.RasterExportJpegQuality = RasterExportSettings.NormalizeJpegQuality(settings.RasterExportJpegQuality);
 
         return settings;
     }

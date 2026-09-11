@@ -59,8 +59,6 @@ public sealed partial class BatchPlotForm : Window
     private PlotJob? _highlightedJob;
     private string _lastLogPath = "";
     private string _mergedOutputPath = "";
-    private string _pngPlotDevice = "";
-    private string _jpgPlotDevice = "";
     private string _dwfPlotDevice = "";
     private long _nextSortPriority;
     private HashSet<string> _duplicateDrawingNumbers = new(StringComparer.OrdinalIgnoreCase);
@@ -141,8 +139,6 @@ public sealed partial class BatchPlotForm : Window
                 .Select(item => item?.ToString() ?? "")
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .ToList();
-            _pngPlotDevice = FindPngPlotDevice(devices, pngInstall.DeviceName);
-            _jpgPlotDevice = FindJpgPlotDevice(devices, jpgInstall.DeviceName);
             _dwfPlotDevice = FindDwfPlotDevice(devices, dwfInstall.DeviceName);
             foreach (var style in PlotStyleManager.GetAvailableCtbStyles())
             {
@@ -159,44 +155,6 @@ public sealed partial class BatchPlotForm : Window
         UpdateOutputFormatUi();
         SaveCurrentSettings();
         _styleSelectionReady = true;
-    }
-
-    private static string FindPngPlotDevice(IReadOnlyList<string> devices, string installedPlotter)
-    {
-        var preferred = new[]
-        {
-            installedPlotter,
-            AcadPlotterInstaller.PreferredPngPlotter
-        };
-        foreach (var expected in preferred.Where(value => !string.IsNullOrWhiteSpace(value)))
-        {
-            var match = devices.FirstOrDefault(value => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(match))
-            {
-                return match;
-            }
-        }
-
-        return "";
-    }
-
-    private static string FindJpgPlotDevice(IReadOnlyList<string> devices, string installedPlotter)
-    {
-        var preferred = new[]
-        {
-            installedPlotter,
-            AcadPlotterInstaller.PreferredJpgPlotter
-        };
-        foreach (var expected in preferred.Where(value => !string.IsNullOrWhiteSpace(value)))
-        {
-            var match = devices.FirstOrDefault(value => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrWhiteSpace(match))
-            {
-                return match;
-            }
-        }
-
-        return "";
     }
 
     private static string FindDwfPlotDevice(IReadOnlyList<string> devices, string installedPlotter)
@@ -1884,17 +1842,8 @@ public sealed partial class BatchPlotForm : Window
         "PDF",
         StringComparison.OrdinalIgnoreCase);
 
-    private bool IsJpgOutput => string.Equals(
-        _outputFormatCombo.SelectedItem?.ToString(),
-        "JPG",
-        StringComparison.OrdinalIgnoreCase);
-
-    private bool IsPngOutput => string.Equals(
-        _outputFormatCombo.SelectedItem?.ToString(),
-        "PNG",
-        StringComparison.OrdinalIgnoreCase);
-
-    private bool SupportsLeaveMargin => !IsDwgOutput && !IsPngOutput && !IsJpgOutput;
+    /// <summary>DWG 拆图不走留白；PNG/JPG 先出 PDF 再转图，留白语义与 PDF 相同。</summary>
+    private bool SupportsLeaveMargin => !IsDwgOutput;
 
     private bool IsDwfOutput => string.Equals(
         _outputFormatCombo.SelectedItem?.ToString(),
@@ -1905,11 +1854,9 @@ public sealed partial class BatchPlotForm : Window
 
     private string SelectedOutputExtension => "." + SelectedOutputFormat.ToLowerInvariant();
 
-    private string SelectedPlotDevice => IsPdfOutput
-        ? AcadPlotterInstaller.PreferredPdfPlotter
-        : IsJpgOutput ? _jpgPlotDevice
-        : IsDwfOutput ? _dwfPlotDevice
-        : _pngPlotDevice;
+    private string SelectedPlotDevice => IsDwfOutput
+        ? _dwfPlotDevice
+        : AcadPlotterInstaller.PreferredPdfPlotter;
 
     private string? AutomaticOutputSubfolder => _savePathModeCombo.SelectedIndex == 1
                                                    && !string.IsNullOrWhiteSpace(SelectedOutputFormat)
@@ -2002,7 +1949,7 @@ public sealed partial class BatchPlotForm : Window
         }
         _styleSettingsButton.IsEnabled = plotOutput && _styleCombo.SelectedIndex >= 0;
         _mergePdfCheckBox.IsEnabled = IsPdfOutput;
-        // PNG/JPG 使用像素介质，不支持毫米纸张扩展或按毫米缩放留白；保留勾选状态供切回 PDF/DWF。
+        // PNG/JPG 先出 PDF 再转图，留白与 PDF 相同；DWG 拆图仍禁用留白。
         _leaveMarginCheckBox.IsEnabled = SupportsLeaveMargin;
         _marginInput.IsEnabled = SupportsLeaveMargin && _leaveMarginCheckBox.IsChecked == true;
 
@@ -2072,7 +2019,7 @@ public sealed partial class BatchPlotForm : Window
             progress.Report(0, selected.Count, "准备自定义纸张与输出路径…");
             PumpMessages();
 
-            var results = PlotterService.PlotMany(
+            var results = PdfRasterExport.PlotMany(
                 selected,
                 device,
                 style,
@@ -2287,7 +2234,7 @@ public sealed partial class BatchPlotForm : Window
 
     private void ApplyLeaveMarginSelection(IEnumerable<PlotJob> jobs)
     {
-        // 即使用户切换格式前曾勾选留白，PNG/JPG 作业也必须强制关闭，不能只依赖控件禁用状态。
+        // PNG/JPG 先出 PDF 再转图，留白与 PDF 相同，按当前勾选写入作业。
         var leaveMargin = SupportsLeaveMargin && _leaveMarginCheckBox.IsChecked == true;
         var marginMm = ReadMarginValue(_marginInput);
         foreach (var job in jobs)

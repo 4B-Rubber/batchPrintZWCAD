@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:ZwcadBatchPlot"
         x:Class="ZwcadBatchPlot.RectangleBatchPlotForm"
-        Title="LA通用型批量打印 V1.15.6.4"
+        Title="LA通用型批量打印 V1.15.7"
         Width="900" Height="520"
         MinWidth="720" MinHeight="460"
         WindowStartupLocation="CenterScreen"
@@ -121,7 +121,7 @@
                           Margin="4,0,8,0"
                           ToolTip="仅 PDF 可用；书签和按纸张大小分组合并可在批量打印设置中配置。" />
                 <StackPanel x:Name="_marginPanel" Orientation="Horizontal"
-                            ToolTip="PDF/DWF 均支持：正数扩大纸张并保持原比例，负数保持原纸张并居中缩小内容。">
+                            ToolTip="PDF/DWF/PNG/JPG 均支持：正数扩大纸张并保持原比例，负数保持原纸张并居中缩小内容。">
                     <CheckBox x:Name="_leaveMargin" Content="留白" VerticalAlignment="Center"
                               Margin="4,0,4,0" Checked="LeaveMargin_CheckedChanged"
                               Unchecked="LeaveMargin_CheckedChanged" />

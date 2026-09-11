@@ -71,7 +71,8 @@ public static class CustomPaperBatchPreparer
 
         if (!isPdfDevice && !isDwfDevice)
         {
-            // PNG/JPG 等设备不支持本软件的动态毫米纸张；不得沿用 PDF/DWF 的严格介质标记。
+            // 非 PDF/DWF 设备（旧版 PNG/JPG 绘图仪）不支持动态毫米纸张。
+            // 当前 PNG/JPG 已改走 PDF 绘图仪，正常不会进入此分支。
             foreach (var job in customJobs)
             {
                 job.EffectivePaperWidthMm = 0;

@@ -1095,6 +1095,7 @@ public sealed partial class SettingsForm : Window
         _openMergedPdfAfterMerge.IsChecked = settings.OpenMergedPdfAfterMerge;
         _generatePrintLog.IsChecked = settings.GeneratePrintLog;
         _convertTextToGeometryWhenPlotting.IsChecked = settings.ConvertTextToGeometryWhenPlotting;
+        _rasterExportDpi.Value = RasterExportSettings.NormalizeDpi(settings.RasterExportDpi);
         _fileNamePattern.Text = settings.PdfFileNamePattern;
         _fileNameSequenceStart.Value = Math.Max(
             _fileNameSequenceStart.Min,
@@ -1151,6 +1152,7 @@ public sealed partial class SettingsForm : Window
         current.OpenMergedPdfAfterMerge = _openMergedPdfAfterMerge.IsChecked == true;
         current.GeneratePrintLog = _generatePrintLog.IsChecked == true;
         current.ConvertTextToGeometryWhenPlotting = _convertTextToGeometryWhenPlotting.IsChecked == true;
+        current.RasterExportDpi = RasterExportSettings.NormalizeDpi((int)Math.Round(_rasterExportDpi.Value));
         if (string.IsNullOrWhiteSpace(_fileNamePattern.Text))
         {
             System.Windows.MessageBox.Show("请输入文件命名规则。", Title, MessageBoxButton.OK, MessageBoxImage.Warning);

@@ -132,8 +132,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     private bool _suppressPaperEvents;
     private string _sortMemberPath = "";
     private List<Row>? _pendingPrintToggleRows;
-    private string _pngPlotDevice = "";
-    private string _jpgPlotDevice = "";
     private string _dwfPlotDevice = "";
     private bool _styleSelectionReady;
     private List<(PlotJob Job, string DrawingNumber)>? _lastOverlayRebuildKey;
@@ -1054,7 +1052,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             // 汇总本批所有任意加长尺寸后只更新一次实际 PMP，再进入连续打印。
             CustomPaperBatchPreparer.Prepare(selected, device);
-            var results = PlotterService.PlotMany(
+            var results = PdfRasterExport.PlotMany(
                 selected, device, SelectedStyle(), _document, _settings,
                 beforeJob: job =>
                 {
@@ -1257,7 +1255,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void ApplyLeaveMarginSelection(IEnumerable<PlotJob> jobs)
     {
-        // PNG/JPG 使用像素介质，留白的毫米纸张/缩放语义不成立，作业层必须强制关闭。
+        // PNG/JPG 先出 PDF 再转图，留白与 PDF 相同，按当前勾选写入作业。
         var leaveMargin = SupportsLeaveMargin && _leaveMargin.IsChecked == true;
         var marginMm = ReadMarginValue(_marginInput);
         foreach (var job in jobs)
@@ -1303,16 +1301,6 @@ public sealed partial class RectangleBatchPlotForm : Window
             .Select(item => item?.ToString() ?? "")
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToList();
-        _pngPlotDevice = FindPlotDevice(
-            devices,
-            pngInstall.DeviceName,
-            _ => false,
-            AcadPlotterInstaller.PreferredPngPlotter);
-        _jpgPlotDevice = FindPlotDevice(
-            devices,
-            jpgInstall.DeviceName,
-            _ => false,
-            AcadPlotterInstaller.PreferredJpgPlotter);
         _dwfPlotDevice = FindPlotDevice(
             devices,
             dwfInstall.DeviceName,
@@ -1586,7 +1574,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         var plotOutput = !IsDwgOutput;
         _style.IsEnabled = plotOutput;
         _styleSettingsButton.IsEnabled = plotOutput && _style.SelectedIndex >= 0;
-        // 禁用但保留勾选状态，切回 PDF/DWF 后恢复用户原选择；实际作业另有强制关闭保护。
         _leaveMargin.IsEnabled = SupportsLeaveMargin;
         _marginInput.IsEnabled = SupportsLeaveMargin && _leaveMargin.IsChecked == true;
         _mergePdf.IsEnabled = IsPdfOutput;
@@ -1613,18 +1600,16 @@ public sealed partial class RectangleBatchPlotForm : Window
     private string SelectedOutputExtension => "." + SelectedOutputFormat.ToLowerInvariant();
     private bool IsPdfOutput => string.Equals(SelectedOutputFormat, "PDF", StringComparison.OrdinalIgnoreCase);
     private bool IsDwgOutput => string.Equals(SelectedOutputFormat, "DWG", StringComparison.OrdinalIgnoreCase);
-    private bool IsPngOutput => string.Equals(SelectedOutputFormat, "PNG", StringComparison.OrdinalIgnoreCase);
-    private bool IsJpgOutput => string.Equals(SelectedOutputFormat, "JPG", StringComparison.OrdinalIgnoreCase);
     private bool IsDwfOutput => string.Equals(SelectedOutputFormat, "DWF", StringComparison.OrdinalIgnoreCase);
-    private bool SupportsLeaveMargin => !IsDwgOutput && !IsPngOutput && !IsJpgOutput;
+    /// <summary>DWG 拆图不走留白；PNG/JPG 先出 PDF 再转图，留白语义与 PDF 相同。</summary>
+    private bool SupportsLeaveMargin => !IsDwgOutput;
     private string? AutomaticOutputSubfolder => _savePathModeCombo.SelectedIndex == 1
         ? FileNameSanitizer.Clean(SelectedOutputFormat)
         : null;
-    private string SelectedDevice() => IsPdfOutput
-        ? AcadPlotterInstaller.PreferredPdfPlotter
-        : IsJpgOutput ? _jpgPlotDevice
-        : IsDwfOutput ? _dwfPlotDevice
-        : _pngPlotDevice;
+    /// <summary>PNG/JPG 与 PDF 共用 PDF 绘图仪，打印后再按设置 DPI 转图。</summary>
+    private string SelectedDevice() => IsDwfOutput
+        ? _dwfPlotDevice
+        : AcadPlotterInstaller.PreferredPdfPlotter;
     private string SelectedStyle() => _style.SelectedItem?.ToString() ?? "";
 
     private void SaveCurrentPlotOptions()
