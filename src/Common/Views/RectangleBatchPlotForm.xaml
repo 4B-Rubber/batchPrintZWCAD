@@ -183,6 +183,16 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <DataGridTextColumn x:Name="_drawingNumberColumn" Header="图号"
+                                    Binding="{Binding DrawingNumber}"
+                                    Width="120" MinWidth="80" IsReadOnly="True"
+                                    SortMemberPath="DrawingNumber"
+                                    Visibility="Collapsed" />
+                <DataGridTextColumn x:Name="_titleColumn" Header="图名"
+                                    Binding="{Binding Title}"
+                                    Width="160" MinWidth="100" IsReadOnly="True"
+                                    SortMemberPath="Title"
+                                    Visibility="Collapsed" />
                 <DataGridTextColumn Header="文件名" Binding="{Binding FileName}"
                                     Width="*" MinWidth="170" IsReadOnly="True"
                                     SortMemberPath="FileName" />

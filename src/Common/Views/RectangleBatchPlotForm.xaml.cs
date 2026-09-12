@@ -78,6 +78,12 @@ public sealed partial class RectangleBatchPlotForm : Window
             }
         }
 
+        /// <summary>扫描识别到的图号；无属性识别时为空。</summary>
+        public string DrawingNumber => Job.DrawingNumber ?? "";
+
+        /// <summary>扫描识别到的图名；无属性识别时为空或不显示列。</summary>
+        public string Title => Job.Title ?? "";
+
         public string PaperChoice
         {
             get => _paperChoice;
@@ -98,6 +104,8 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
             Scale = Job.ScaleText;
             OnPropertyChanged(nameof(Scale));
+            OnPropertyChanged(nameof(DrawingNumber));
+            OnPropertyChanged(nameof(Title));
         }
 
         public void SetNumber(int index)
@@ -134,6 +142,8 @@ public sealed partial class RectangleBatchPlotForm : Window
     private List<Row>? _pendingPrintToggleRows;
     private string _dwfPlotDevice = "";
     private bool _styleSelectionReady;
+    /// <summary>本批是否识别到至少一张图号或图名属性；决定是否显示列并走设置文件名规则。</summary>
+    private bool _hasAttributeIdentity;
     private List<(PlotJob Job, string DrawingNumber)>? _lastOverlayRebuildKey;
     private bool _overlayPainted;
 
@@ -285,6 +295,10 @@ public sealed partial class RectangleBatchPlotForm : Window
                 return row.Selected ? "1" : "0";
             case nameof(Row.FileName):
                 return row.FileName;
+            case nameof(Row.DrawingNumber):
+                return row.DrawingNumber;
+            case nameof(Row.Title):
+                return row.Title;
             case nameof(Row.PaperChoice):
                 return row.PaperChoice;
             case nameof(Row.Scale):
@@ -485,11 +499,140 @@ public sealed partial class RectangleBatchPlotForm : Window
             });
         }
 
+        _hasAttributeIdentity = rows.Any(row =>
+            !string.IsNullOrWhiteSpace(row.Job.CadDrawingNumber)
+            || !string.IsNullOrWhiteSpace(row.Job.CadTitle));
+        if (_hasAttributeIdentity)
+        {
+            // 进入属性命名模式后，图号/图名只保留识别结果，避免文件名规则混入 DWG 名或序号。
+            foreach (var row in rows)
+            {
+                row.Job.DrawingNumber = row.Job.CadDrawingNumber ?? "";
+                row.Job.Title = row.Job.CadTitle ?? "";
+            }
+        }
+
+        UpdateAttributeIdentityColumns();
         ReplaceBindingListContents(_rows, rows);
         _viewSortedByHeader = false;
         _sortMemberPath = "";
         SortRows();
     }
+
+    /// <summary>有识别结果时显示图号/图名列，否则保持原有列布局。</summary>
+    private void UpdateAttributeIdentityColumns()
+    {
+        var visibility = _hasAttributeIdentity
+            ? System.Windows.Visibility.Visible
+            : System.Windows.Visibility.Collapsed;
+        _drawingNumberColumn.Visibility = visibility;
+        _titleColumn.Visibility = visibility;
+    }
+
+    private void RefreshFileNames()
+    {
+        if (_hasAttributeIdentity)
+        {
+            RefreshAttributeIdentityFileNames();
+            return;
+        }
+
+        var stem = GetDocumentFileStem();
+        var digits = Math.Max(1, Math.Min(10, _settings.FileNameSequenceDigits));
+        var printIndex = 0;
+        for (var i = 0; i < _rows.Count; i++)
+        {
+            if (!_rows[i].Selected)
+            {
+                continue;
+            }
+
+            printIndex++;
+            _rows[i].Job.DrawingNumber = printIndex.ToString($"D{digits}");
+            _rows[i].FileName = $"{stem}{printIndex.ToString($"D{digits}")}{SelectedOutputExtension}";
+            _rows[i].RefreshFromJob();
+        }
+
+        RefreshOutputPaths();
+    }
+
+    /// <summary>
+    /// 本批有属性识别时：有图号/图名的行走设置文件名规则；
+    /// 无属性的行仍按原规则 {DWG名}{序号}，避免出现「_.pdf」这类空占位结果。
+    /// </summary>
+    private void RefreshAttributeIdentityFileNames()
+    {
+        var stem = GetDocumentFileStem();
+        var legacyDigits = Math.Max(1, Math.Min(10, _settings.FileNameSequenceDigits));
+        var selectedCount = _rows.Count(row => row.Selected);
+        var patternDigits = FileNameSanitizer.ResolveSequenceDigits(
+            _settings.AutoFileNameSequenceDigits,
+            _settings.FileNameSequenceDigits,
+            _settings.FileNameSequenceStartNumber,
+            selectedCount);
+        var reservedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var directory = _outputDirectory.Text.Trim();
+        var selectedIndex = 0;
+        var printIndex = 0;
+        foreach (var row in _rows)
+        {
+            if (!row.Selected)
+            {
+                continue;
+            }
+
+            var sequenceNumber = _settings.FileNameSequenceStartNumber + selectedIndex;
+            selectedIndex++;
+            printIndex++;
+
+            string baseName;
+            if (RowHasAttributeIdentity(row))
+            {
+                baseName = FileNameSanitizer.FormatFileNamePattern(
+                    _settings.PdfFileNamePattern,
+                    row.Job,
+                    sequenceNumber,
+                    patternDigits,
+                    _settings.LongPaperNameFormat,
+                    _settings.LongPaperSnapToleranceMm);
+            }
+            else
+            {
+                // 该框未识别到图号/图名：与整批无属性时一致，用 DWG 名 + 勾选序号。
+                baseName = $"{stem}{printIndex.ToString($"D{legacyDigits}")}";
+            }
+
+            var fullPath = FileNameSanitizer.MakeUnique(
+                string.IsNullOrWhiteSpace(directory) ? "." : directory,
+                baseName,
+                reservedPaths,
+                _settings.AddSequenceWhenPdfExists,
+                SelectedOutputExtension,
+                createDirectory: false);
+            reservedPaths.Add(fullPath);
+            row.FileName = Path.GetFileName(fullPath);
+            row.RefreshFromJob();
+        }
+
+        RefreshOutputPaths();
+    }
+
+    /// <summary>当前文档用于默认文件名的主文件名（无扩展名）。</summary>
+    private string GetDocumentFileStem()
+    {
+        var stem = Path.GetFileNameWithoutExtension(_document.Database.Filename);
+        if (string.IsNullOrWhiteSpace(stem))
+        {
+            stem = Path.GetFileNameWithoutExtension(_document.Name);
+        }
+
+        return stem ?? "";
+    }
+
+    /// <summary>该行是否识别到非空图号或图名属性。</summary>
+    private static bool RowHasAttributeIdentity(Row row)
+        => !string.IsNullOrWhiteSpace(row.Job.CadDrawingNumber)
+           || !string.IsNullOrWhiteSpace(row.Job.CadTitle);
 
     private void ReloadFrames()
     {
@@ -735,31 +878,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
             _displayRows[i].SetNumber(i + 1);
         }
-    }
-
-    private void RefreshFileNames()
-    {
-        var stem = Path.GetFileNameWithoutExtension(_document.Database.Filename);
-        if (string.IsNullOrWhiteSpace(stem))
-        {
-            stem = Path.GetFileNameWithoutExtension(_document.Name);
-        }
-
-        var digits = Math.Max(1, Math.Min(10, _settings.FileNameSequenceDigits));
-        var printIndex = 0;
-        for (var i = 0; i < _rows.Count; i++)
-        {
-            if (!_rows[i].Selected)
-            {
-                continue;
-            }
-
-            printIndex++;
-            _rows[i].Job.DrawingNumber = printIndex.ToString($"D{digits}");
-            _rows[i].FileName = $"{stem}{printIndex.ToString($"D{digits}")}{SelectedOutputExtension}";
-        }
-
-        RefreshOutputPaths();
     }
 
     private void RefreshOutputPaths()
@@ -1750,6 +1868,11 @@ public sealed partial class RectangleBatchPlotForm : Window
             _settings.LongPaperSnapToleranceMm = updated.LongPaperSnapToleranceMm;
             _settings.LongPaperNameFormat = updated.LongPaperNameFormat;
             _settings.SortOrderHorizontalFirst = updated.SortOrderHorizontalFirst;
+            _settings.PdfFileNamePattern = updated.PdfFileNamePattern;
+            _settings.AddSequenceWhenPdfExists = updated.AddSequenceWhenPdfExists;
+            _settings.FileNameSequenceDigits = updated.FileNameSequenceDigits;
+            _settings.AutoFileNameSequenceDigits = updated.AutoFileNameSequenceDigits;
+            _settings.FileNameSequenceStartNumber = updated.FileNameSequenceStartNumber;
 
             if (!form.RequestPickDirectoryRowHeight
                 && !form.RequestPickDirectoryTextAppearance
@@ -1760,6 +1883,11 @@ public sealed partial class RectangleBatchPlotForm : Window
                 {
                     // 开关或纸张容差变化后立即沿用上次扫描范围重扫，避免列表仍显示旧识别结果。
                     ReloadFrames();
+                }
+                else
+                {
+                    // 文件名规则或序号设置变更后刷新列表输出名。
+                    RefreshFileNames();
                 }
                 return;
             }

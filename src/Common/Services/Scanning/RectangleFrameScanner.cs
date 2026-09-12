@@ -451,6 +451,7 @@ public static class RectangleFrameScanner
 
         // 3e. 生成结果
         var results = new List<Result>();
+        var packedRectangles = new List<LocalRectangle>(withContent.Count);
         foreach (var rectangle in withContent)
         {
             var options = paperOptionsByRect[rectangle];
@@ -501,9 +502,207 @@ public static class RectangleFrameScanner
             }
 
             results.Add(result);
+            packedRectangles.Add(rectangle);
         }
 
+        // 3f. 同一空间一次事务内提取顶层属性块的图号/图名，不按框反复开库。
+        FillAttributeIdentities(document, ownerId, results, packedRectangles);
+
         return results;
+    }
+
+    /// <summary>属性 Tag「图号」的严格匹配名。</summary>
+    private const string DrawingNumberAttributeTag = "图号";
+
+    /// <summary>属性 Tag「图名」的严格匹配名。</summary>
+    private const string TitleAttributeTag = "图名";
+
+    /// <summary>
+    /// 在当前布局空间一次性枚举顶层块参照属性，把框内非空「图号」「图名」填入作业。
+    /// 同一框多个命中时取离该框右下角（MaxX, MinY）最近的；不深入嵌套块。
+    /// </summary>
+    private static void FillAttributeIdentities(
+        Document document,
+        ObjectId ownerId,
+        IReadOnlyList<Result> results,
+        IReadOnlyList<LocalRectangle> rectangles)
+    {
+        if (results.Count == 0 || results.Count != rectangles.Count)
+        {
+            return;
+        }
+
+        var numberCandidates = new List<(string Text, double X, double Y)>();
+        var titleCandidates = new List<(string Text, double X, double Y)>();
+        using (var tr = document.Database.TransactionManager.StartTransaction())
+        {
+            var owner = (BlockTableRecord)tr.GetObject(ownerId, OpenMode.ForRead);
+            foreach (ObjectId id in owner)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead, false) is not BlockReference blockRef)
+                {
+                    continue;
+                }
+
+                if (!IsEntityVisible(blockRef)
+                    || string.Equals(blockRef.Layer, TemporaryOverlayLayer, StringComparison.OrdinalIgnoreCase)
+                    || !IsEntityLayerScannable(tr, blockRef)
+                    || blockRef.AttributeCollection == null
+                    || blockRef.AttributeCollection.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (ObjectId attributeId in blockRef.AttributeCollection)
+                {
+                    if (tr.GetObject(attributeId, OpenMode.ForRead, false) is not AttributeReference attribute
+                        || !IsEntityVisible(attribute))
+                    {
+                        continue;
+                    }
+
+                    var tag = (attribute.Tag ?? "").Trim();
+                    var text = GetAttributeDisplayText(attribute).Trim();
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        continue;
+                    }
+
+                    var point = attribute.Position;
+                    if (string.Equals(tag, DrawingNumberAttributeTag, StringComparison.Ordinal))
+                    {
+                        numberCandidates.Add((text, point.X, point.Y));
+                    }
+                    else if (string.Equals(tag, TitleAttributeTag, StringComparison.Ordinal))
+                    {
+                        titleCandidates.Add((text, point.X, point.Y));
+                    }
+                }
+            }
+
+            tr.Commit();
+        }
+
+        if (numberCandidates.Count == 0 && titleCandidates.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < results.Count; i++)
+        {
+            var rectangle = rectangles[i];
+            var job = results[i].Job;
+            if (TryPickClosestAttribute(numberCandidates, rectangle, out var drawingNumber))
+            {
+                job.CadDrawingNumber = drawingNumber;
+                job.DrawingNumber = drawingNumber;
+            }
+
+            if (TryPickClosestAttribute(titleCandidates, rectangle, out var title))
+            {
+                job.CadTitle = title;
+                job.Title = title;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 在矩形范围内的候选中选取离右下角最近的属性值。
+    /// </summary>
+    private static bool TryPickClosestAttribute(
+        IReadOnlyList<(string Text, double X, double Y)> candidates,
+        LocalRectangle rectangle,
+        out string text)
+    {
+        text = "";
+        var bestDistance = double.MaxValue;
+        string? best = null;
+        var cornerX = rectangle.MaxX;
+        var cornerY = rectangle.MinY;
+        foreach (var candidate in candidates)
+        {
+            if (!IsPointInsideRectangle(rectangle, candidate.X, candidate.Y))
+            {
+                continue;
+            }
+
+            var dx = candidate.X - cornerX;
+            var dy = candidate.Y - cornerY;
+            var distance = dx * dx + dy * dy;
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            bestDistance = distance;
+            best = candidate.Text;
+        }
+
+        if (best == null)
+        {
+            return false;
+        }
+
+        text = best;
+        return true;
+    }
+
+    /// <summary>
+    /// 判断点是否在打印矩形内。有实际角点时用多边形判定，避免旋转框 AABB 误收框外点。
+    /// </summary>
+    private static bool IsPointInsideRectangle(LocalRectangle rectangle, double x, double y)
+    {
+        if (rectangle.CornerPoints is { Length: >= 8 } points)
+        {
+            var polygon = new[]
+            {
+                new Point3d(points[0], points[1], 0),
+                new Point3d(points[2], points[3], 0),
+                new Point3d(points[4], points[5], 0),
+                new Point3d(points[6], points[7], 0)
+            };
+            return IsPointInsidePolygon(new Point3d(x, y, 0), polygon);
+        }
+
+        return rectangle.Contains(x, y);
+    }
+
+    /// <summary>射线法判断点是否在多边形内（含边界）。</summary>
+    private static bool IsPointInsidePolygon(Point3d point, Point3d[] polygon)
+    {
+        var inside = false;
+        for (int current = 0, previous = polygon.Length - 1;
+             current < polygon.Length;
+             previous = current++)
+        {
+            var start = polygon[previous];
+            var end = polygon[current];
+            var onSegment =
+                Math.Abs((end.Y - start.Y) * (point.X - start.X) - (end.X - start.X) * (point.Y - start.Y)) <= 1e-9
+                && point.X >= Math.Min(start.X, end.X) - 1e-9
+                && point.X <= Math.Max(start.X, end.X) + 1e-9
+                && point.Y >= Math.Min(start.Y, end.Y) - 1e-9
+                && point.Y <= Math.Max(start.Y, end.Y) + 1e-9;
+            if (onSegment)
+            {
+                return true;
+            }
+
+            var crossesScanLine = (start.Y > point.Y) != (end.Y > point.Y);
+            if (crossesScanLine
+                && point.X < (end.X - start.X) * (point.Y - start.Y) / (end.Y - start.Y + 1e-30) + start.X)
+            {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
+
+    /// <summary>读取属性显示文字。</summary>
+    private static string GetAttributeDisplayText(AttributeReference attribute)
+    {
+        return attribute.TextString ?? "";
     }
 
     private static Point3d[] GetWorldPoints(LocalRectangle rectangle)
