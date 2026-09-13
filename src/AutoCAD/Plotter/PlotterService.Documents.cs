@@ -107,6 +107,24 @@ public static partial class PlotterService
         }
     }
 
+    /**
+     * EnsureSpaceRegenerated：切换到目标模型/布局后重生成一次。
+     * 同一 SpaceName 只执行一次，避免每个图框重复 Regen。
+     * 仅用于当前打开图；多文件批打不走此路径。
+     */
+    private static void EnsureSpaceRegenerated(Document doc, PlotJob job, ref string? lastSpaceKey)
+    {
+        var spaceKey = string.IsNullOrWhiteSpace(job.SpaceName) ? "__CURRENT__" : job.SpaceName.Trim();
+        if (string.Equals(lastSpaceKey, spaceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ActivateLayout(doc.Database, job);
+        doc.Editor.Regen();
+        lastSpaceKey = spaceKey;
+    }
+
     /** PrepareOutputFile：创建输出目录并删除已存在的同名文件。 */
     private static void PrepareOutputFile(string outputPath)
     {

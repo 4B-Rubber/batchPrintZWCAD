@@ -61,7 +61,8 @@ public static partial class PlotterService
                 deviceName,
                 styleSheet,
                 settings.HideFrameBoundaryWhenPlotting,
-                settings.PlotTransparency);
+                settings.PlotTransparency,
+                settings.PlotObjectLineweights);
 
             PrepareOutputFile(job.OutputPath);
             RunPlot(plot.Info, documentName, job.OutputPath, job.DrawingNumber);
@@ -83,17 +84,20 @@ public static partial class PlotterService
         string deviceName,
         string styleSheet,
         bool hideOuterFrame,
-        bool plotTransparency)
+        bool plotTransparency,
+        bool plotObjectLineweights)
     {
         try
         {
-            return CreateValidatedPlotCore(layout, job, window, deviceName, styleSheet, hideOuterFrame, plotTransparency);
+            return CreateValidatedPlotCore(
+                layout, job, window, deviceName, styleSheet, hideOuterFrame, plotTransparency, plotObjectLineweights);
         }
         catch (CachedMediaCatalogException)
         {
             // PC3/PMP 可能在 CAD 会话中被更新；仅当缓存目录失效时清缓存并完整读取一次。
             InvalidateMediaCatalog(deviceName);
-            return CreateValidatedPlotCore(layout, job, window, deviceName, styleSheet, hideOuterFrame, plotTransparency);
+            return CreateValidatedPlotCore(
+                layout, job, window, deviceName, styleSheet, hideOuterFrame, plotTransparency, plotObjectLineweights);
         }
     }
 
@@ -105,7 +109,8 @@ public static partial class PlotterService
         string deviceName,
         string styleSheet,
         bool hideOuterFrame,
-        bool plotTransparency)
+        bool plotTransparency,
+        bool plotObjectLineweights)
     {
         var validator = PlotSettingsValidator.Current;
         var media = ChooseMedia(validator, layout, deviceName, job, window, out var usedCachedCatalog);
@@ -129,7 +134,8 @@ public static partial class PlotterService
                     window,
                     job,
                     hideOuterFrame,
-                    plotTransparency);
+                    plotTransparency,
+                    plotObjectLineweights);
 
                 var info = new PlotInfo
                 {
@@ -185,7 +191,7 @@ public static partial class PlotterService
         throw failure;
     }
 
-    /** ConfigurePlotSettings：写入设备、纸张单位、介质、Window、比例、旋转、样式与透明度。 */
+    /** ConfigurePlotSettings：写入设备、纸张单位、介质、Window、比例、旋转、样式、透明度与线宽。 */
     private static void ConfigurePlotSettings(
         PlotSettingsValidator validator,
         PlotSettings settings,
@@ -196,7 +202,8 @@ public static partial class PlotterService
         Extents2d window,
         PlotJob job,
         bool hideOuterFrame,
-        bool plotTransparency)
+        bool plotTransparency,
+        bool plotObjectLineweights)
     {
         try
         {
@@ -245,6 +252,8 @@ public static partial class PlotterService
         }
 
         settings.PlotTransparency = plotTransparency;
+        // CopyFrom(layout) 会带入布局原线宽开关；按常规设置强制覆盖。
+        settings.PrintLineweights = plotObjectLineweights;
     }
 
     /** RunPlot：调用 PlotEngine 把 PlotInfo 输出到文件，并等待引擎空闲。 */
@@ -365,7 +374,8 @@ public static partial class PlotterService
                 deviceName,
                 styleSheet,
                 settings.HideFrameBoundaryWhenPlotting,
-                settings.PlotTransparency);
+                settings.PlotTransparency,
+                settings.PlotObjectLineweights);
             RunPreview(plot.Info, documentName);
             tr.Commit();
             WaitForPlotIdle();

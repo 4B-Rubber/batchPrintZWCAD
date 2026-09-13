@@ -90,6 +90,10 @@ public sealed class AppSettings
     /// </summary>
     public bool PlotTransparency { get; set; } = true;
     /// <summary>
+    /// 正式打印时是否按对象线宽输出。默认关闭，对应 CAD 打印对话框中的“打印对象线宽”。
+    /// </summary>
+    public bool PlotObjectLineweights { get; set; }
+    /// <summary>
     /// PNG/JPG 由临时 PDF 转图时使用的分辨率（DPI）。默认 150。
     /// 在批量打印设置「常规」中编辑；非法值在加载时回落到默认。
     /// </summary>

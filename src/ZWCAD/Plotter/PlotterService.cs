@@ -143,7 +143,7 @@ public static partial class PlotterService
         PlotOpenedDocument(job, deviceName, styleSheet, settings);
     }
 
-    /** Preview：单张预览。不切换活动文档、布局或视图，按已有图框窗口直接 PreviewDatabase。 */
+    /** Preview：单张预览。激活目标布局并 Regen 一次后，按已有图框窗口 PreviewDatabase。 */
     public static void Preview(PlotJob job, string deviceName, string styleSheet, Document currentDocument)
     {
         var settings = AppSettingsStore.Load();
@@ -158,6 +158,8 @@ public static partial class PlotterService
         {
             using (doc.LockDocument())
             {
+                string? lastSpaceKey = null;
+                EnsureSpaceRegenerated(doc, job, ref lastSpaceKey);
                 // 首次扫描得到的图框信息已可用于预览，避免每次点击预览都重新扫描整张图纸。
                 PreviewDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, doc);
             }
@@ -199,7 +201,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotCurrentDocumentGroup：当前文档组：不切换布局或视图，按已有窗口逐张 PlotDatabase。 */
+    /** PlotCurrentDocumentGroup：当前文档组：按模型/布局各 Regen 一次后，按已有窗口逐张 PlotDatabase。 */
     private static void PlotCurrentDocumentGroup(
         IReadOnlyList<PlotJob> jobs,
         Document currentDocument,
@@ -210,6 +212,7 @@ public static partial class PlotterService
         List<PlotJobResult> results,
         CancellationToken cancellationToken)
     {
+        string? lastSpaceKey = null;
         foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -218,6 +221,7 @@ public static partial class PlotterService
                 beforeJob?.Invoke(job);
                 using (currentDocument.LockDocument())
                 {
+                    EnsureSpaceRegenerated(currentDocument, job, ref lastSpaceKey);
                     PlotDatabase(currentDocument.Database, currentDocument.Name, job, deviceName, styleSheet, settings, currentDocument);
                 }
 
@@ -231,7 +235,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotOpenedDocumentGroup：已打开文档组：切活动文档、刷新窗口后出图。 */
+    /** PlotOpenedDocumentGroup：已打开文档组：不切换活动文档，按已有窗口逐张出图。 */
     private static void PlotOpenedDocumentGroup(
         IReadOnlyList<PlotJob> jobs,
         string sourceFile,
@@ -355,6 +359,24 @@ public static partial class PlotterService
         {
             throw new InvalidOperationException($"无法激活目标布局“{job.SpaceName}”，已停止打印以避免输出错误区域。", ex);
         }
+    }
+
+    /**
+     * EnsureSpaceRegenerated：切换到目标模型/布局后重生成一次。
+     * 同一 SpaceName 只执行一次，避免每个图框重复 Regen。
+     * 仅用于当前打开图；多文件批打不走此路径。
+     */
+    private static void EnsureSpaceRegenerated(Document doc, PlotJob job, ref string? lastSpaceKey)
+    {
+        var spaceKey = string.IsNullOrWhiteSpace(job.SpaceName) ? "__CURRENT__" : job.SpaceName.Trim();
+        if (string.Equals(lastSpaceKey, spaceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ActivateLayout(job);
+        doc.Editor.Regen();
+        lastSpaceKey = spaceKey;
     }
 
     /** FindOpenDocument：按路径查找已打开文档。 */

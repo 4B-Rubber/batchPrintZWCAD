@@ -294,6 +294,12 @@ public static class RectangleFrameScanner
             {
                 var blockTable = (BlockTable)tr.GetObject(document.Database.BlockTableId, OpenMode.ForRead);
                 owner = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                // 与 ScanScope 一致：先校验 LayoutId，避免空/无效 id 触发 eNotApplicable。
+                if (!owner.IsLayout || owner.LayoutId.IsNull)
+                {
+                    return new List<Result>();
+                }
+
                 layout = (Layout)tr.GetObject(owner.LayoutId, OpenMode.ForRead);
             }
             else
@@ -307,11 +313,10 @@ public static class RectangleFrameScanner
 
                 layout = (Layout)tr.GetObject(layouts.GetAt(currentLayoutName), OpenMode.ForRead);
                 owner = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
-            }
-
-            if (!owner.IsLayout || owner.LayoutId.IsNull)
-            {
-                return new List<Result>();
+                if (!owner.IsLayout || owner.LayoutId.IsNull)
+                {
+                    return new List<Result>();
+                }
             }
 
             var rectangles = CollectRectanglesFromSpace(tr, owner, recognizeFourLines, layout.LayoutName);

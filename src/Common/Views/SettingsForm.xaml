@@ -70,6 +70,8 @@
                                           ToolTip="勾选后，正式打印把内容四边各裁 1mm，外框线不再输出；纸张、比例和留白不变。" />
                                 <CheckBox x:Name="_plotTransparency" Content="打印透明度" Margin="0,0,0,2"
                                           ToolTip="勾选后按对象透明度输出，对应 CAD 打印对话框中的“打印透明度”；默认开启。" />
+                                <CheckBox x:Name="_plotObjectLineweights" Content="打印对象线宽" Margin="0,0,0,2"
+                                          ToolTip="勾选后按对象线宽输出，对应 CAD 打印对话框中的“打印对象线宽”；默认关闭。" />
                                 <CheckBox x:Name="_generatePrintLog" Content="生成打印日志" Margin="0,0,0,2" />
                                 <CheckBox x:Name="_convertTextToGeometryWhenPlotting" Content="文字自动转图形打印"
                                           ToolTip="勾选后，PDF/DWF/PNG/JPG 输出会把 TrueType 文字转换为图形轮廓，避免接收方缺少字体；不会炸开或修改原 DWG 文字。默认关闭。" />

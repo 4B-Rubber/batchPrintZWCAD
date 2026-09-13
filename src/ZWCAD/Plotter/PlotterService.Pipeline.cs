@@ -93,6 +93,8 @@ public static partial class PlotterService
             }
 
             plotSettings.PlotTransparency = settings.PlotTransparency;
+            // CopyFrom(layout) 会带入布局原线宽开关；按常规设置强制覆盖。
+            plotSettings.PrintLineweights = settings.PlotObjectLineweights;
 
             var plotInfo = new PlotInfo
             {
@@ -282,6 +284,8 @@ public static partial class PlotterService
             }
 
             plotSettings.PlotTransparency = singleSettings.PlotTransparency;
+            // CopyFrom(layout) 会带入布局原线宽开关；按常规设置强制覆盖。
+            plotSettings.PrintLineweights = singleSettings.PlotObjectLineweights;
 
             var plotInfo = new PlotInfo
             {

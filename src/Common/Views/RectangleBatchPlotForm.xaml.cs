@@ -799,6 +799,18 @@ public sealed partial class RectangleBatchPlotForm : Window
                     continue;
                 }
 
+                // 图纸空间打印窗口就是纸面坐标；禁止用模型空间当前视图矩阵污染布局图框。
+                if (job.IsPaperSpace)
+                {
+                    if (result.CornerPoints != null)
+                    {
+                        job.CornerPoints = (double[])result.CornerPoints.Clone();
+                    }
+
+                    job.IsDcsWindow = true;
+                    continue;
+                }
+
                 if (result.CornerPoints != null)
                 {
                     // PlotJob 是打印与 DWG 拆图的共同载体。Min/Max 转为 DCS 前，必须保留 WCS 四角点。

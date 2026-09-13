@@ -1088,6 +1088,7 @@ public sealed partial class SettingsForm : Window
         _recognizeFourLineRectangleFrames.IsChecked = settings.RecognizeFourLineRectangleFrames;
         _hideFrameBoundaryWhenPlotting.IsChecked = settings.HideFrameBoundaryWhenPlotting;
         _plotTransparency.IsChecked = settings.PlotTransparency;
+        _plotObjectLineweights.IsChecked = settings.PlotObjectLineweights;
         _addSequenceWhenPdfExists.IsChecked = settings.AddSequenceWhenPdfExists;
         _useFileNameAsPdfBookmark.IsChecked = settings.UseFileNameAsPdfBookmark;
         _mergePdfByPaperSize.IsChecked = settings.MergePdfByPaperSize;
@@ -1145,6 +1146,7 @@ public sealed partial class SettingsForm : Window
         current.RecognizeFourLineRectangleFrames = _recognizeFourLineRectangleFrames.IsChecked == true;
         current.HideFrameBoundaryWhenPlotting = _hideFrameBoundaryWhenPlotting.IsChecked == true;
         current.PlotTransparency = _plotTransparency.IsChecked == true;
+        current.PlotObjectLineweights = _plotObjectLineweights.IsChecked == true;
         current.AddSequenceWhenPdfExists = _addSequenceWhenPdfExists.IsChecked == true;
         current.UseFileNameAsPdfBookmark = _useFileNameAsPdfBookmark.IsChecked == true;
         current.MergePdfByPaperSize = _mergePdfByPaperSize.IsChecked == true;

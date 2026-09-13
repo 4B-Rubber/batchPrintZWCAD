@@ -287,6 +287,14 @@ public sealed partial class BatchPlotForm : Window
                     continue;
                 }
 
+                // 图纸空间打印窗口就是纸面坐标；禁止用模型空间当前视图矩阵污染布局图框。
+                if (job.IsPaperSpace)
+                {
+                    job.IsDcsWindow = true;
+                    job.IsManualWindow = true;
+                    continue;
+                }
+
                 // 和图框块扫描一样的四点法：4 个 WCS 角点 × WCS→DCS → 取一次包围盒
                 // 优先用 CornerPoints（图框库参考框的实际 WCS 角点，避免包围盒二次放大）
                 // 兜底用 Min/Max（老版图框库数据或无 PrintRegion 的块）

@@ -169,7 +169,7 @@ public static partial class PlotterService
         }
     }
 
-    /** Preview：单张预览。不切换活动文档、布局或视图，按已有图框窗口直接走 PreviewDatabase。 */
+    /** Preview：单张预览。激活目标布局并 Regen 一次后，按已有图框窗口走 PreviewDatabase。 */
     public static void Preview(PlotJob job, string deviceName, string styleSheet, Document currentDocument)
     {
         var settings = AppSettingsStore.Load();
@@ -184,6 +184,8 @@ public static partial class PlotterService
         {
             using (doc.LockDocument())
             {
+                string? lastSpaceKey = null;
+                EnsureSpaceRegenerated(doc, job, ref lastSpaceKey);
                 // 首次扫描得到的图框信息已可用于预览，避免每次点击预览都重新扫描整张图纸。
                 PreviewDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, doc);
             }
@@ -231,7 +233,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotOpenedDocumentJobs：已打开文档组：切换活动文档、激活布局、刷新窗口后出图。 */
+    /** PlotOpenedDocumentJobs：已打开文档组：不切换活动文档，按已有窗口逐张出图。 */
     private static void PlotOpenedDocumentJobs(
         IReadOnlyList<PlotJob> jobs,
         string sourceFile,
@@ -248,7 +250,25 @@ public static partial class PlotterService
 
         try
         {
-            PlotDocumentJobs(doc, jobs, deviceName, styleSheet, settings, beforeJob, results, cancellationToken);
+            foreach (var job in jobs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    beforeJob?.Invoke(job);
+                    using (doc.LockDocument())
+                    {
+                        PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
+                    }
+
+                    results.Add(new PlotJobResult { Job = job });
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    results.Add(new PlotJobResult { Job = job, Error = ex });
+                }
+            }
         }
         finally
         {
@@ -259,7 +279,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotDocumentJobs：当前文档组：不切换布局或视图，按已有窗口逐张 PlotDatabase。 */
+    /** PlotDocumentJobs：当前文档组：按模型/布局各 Regen 一次后，按已有窗口逐张 PlotDatabase。 */
     private static void PlotDocumentJobs(
         Document doc,
         IReadOnlyList<PlotJob> jobs,
@@ -270,7 +290,8 @@ public static partial class PlotterService
         List<PlotJobResult> results,
         CancellationToken cancellationToken)
     {
-        // 与预览一致：直接使用批打已准备好的窗口（含 DCS），不再出图前重扫图框。
+        // 同一模型或同一布局只激活并重生成一次；图框窗口仍用批打已准备好的数据。
+        string? lastSpaceKey = null;
         foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -279,6 +300,7 @@ public static partial class PlotterService
                 beforeJob?.Invoke(job);
                 using (doc.LockDocument())
                 {
+                    EnsureSpaceRegenerated(doc, job, ref lastSpaceKey);
                     PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
                 }
 
