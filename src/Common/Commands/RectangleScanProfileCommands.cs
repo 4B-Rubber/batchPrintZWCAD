@@ -18,11 +18,11 @@ using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
 
 namespace ZwcadBatchPlot;
 
-/// <summary>???????????? AccoreConsole / ????????</summary>
+/// <summary>矩形图框扫描性能剖析（供 AccoreConsole / 交互会话使用）。</summary>
 public sealed partial class BatchPlotCommands
 {
     /// <summary>
-    /// ???????????????/??????????????
+    /// 对当前图跑多趟矩形扫描剖析：开/关四线识别，以及全空间范围。
     /// </summary>
     [CommandMethod("_ZBP_INTERNAL_PROFILE_RECTANGLE_SCAN")]
     public void ProfileRectangleScan()
