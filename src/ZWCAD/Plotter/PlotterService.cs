@@ -18,12 +18,12 @@ using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
  *
  * 主要功能：
  * - PlotMany / Plot / Preview：对外 API
- * - 当前文档 / 已打开文档 / 侧开 Database 三条分组路径
+ * - 当前文档 / 外部多文件两条分组路径
  * - 布局激活、介质名缓存
  *
  * 核心代码：
- * - GetPlotGroupKey：任务分组键，决定打开方式
- * - PlotCurrentDocumentGroup / PlotOpenedDocumentGroup / PlotSideDatabaseGroup
+ * - GetPlotGroupKey：当前图走 PlotCurrentDocumentGroup，外部图走 PlotExternalFileJobs
+ * - PlotCurrentDocumentGroup / PlotExternalFileJobs
  *
  * 注意：具体设备与 PlotSettings 配置在 Pipeline；介质/比例/窗口见其他 partial。
  * 出图窗口以批打/预览已写入的 job 为准，不再出图前重扫图框。
@@ -71,7 +71,7 @@ public static partial class PlotterService
         using var transparency = PlotTransparencyOverride.Apply(settings.PlotTransparency);
         try
         {
-            foreach (var group in jobs.GroupBy(job => GetPlotGroupKey(job, currentDocument, settings)))
+            foreach (var group in jobs.GroupBy(job => GetPlotGroupKey(job, currentDocument)))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var groupJobs = group.ToList();
@@ -83,13 +83,15 @@ public static partial class PlotterService
                         continue;
                     }
 
-                    if (group.Key.StartsWith("__DB__:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        PlotSideDatabaseGroup(groupJobs, groupJobs[0].SourceFile, deviceName, styleSheet, settings, beforeJob, results, cancellationToken);
-                        continue;
-                    }
-
-                    PlotOpenedDocumentGroup(groupJobs, groupJobs[0].SourceFile, deviceName, styleSheet, settings, beforeJob, results, cancellationToken);
+                    PlotExternalFileJobs(
+                        groupJobs,
+                        groupJobs[0].SourceFile,
+                        deviceName,
+                        styleSheet,
+                        settings,
+                        beforeJob,
+                        results,
+                        cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -115,7 +117,7 @@ public static partial class PlotterService
         return results;
     }
 
-    /** Plot：单张出图：按源文件选择当前文档或打开文档路径。 */
+    /** Plot：单张出图：当前图直接 PlotDatabase；外部图走独立打开文档路径。 */
     public static void Plot(PlotJob job, string deviceName, string styleSheet, Document currentDocument, AppSettings settings)
     {
         EnsureTextGeometryMode(deviceName, settings.ConvertTextToGeometryWhenPlotting);
@@ -130,64 +132,53 @@ public static partial class PlotterService
             return;
         }
 
-        if (!settings.OpenExternalDwgForPlot)
+        var results = new List<PlotJobResult>();
+        PlotExternalFileJobs(
+            new[] { job },
+            job.SourceFile,
+            deviceName,
+            styleSheet,
+            settings,
+            null,
+            results,
+            CancellationToken.None);
+        var result = results.FirstOrDefault();
+        if (result?.Error != null)
         {
-            using var db = new Database(false, true);
-            db.ReadDwgFile(job.SourceFile, FileOpenMode.OpenForReadAndAllShare, true, "");
-            db.CloseInput(true);
-            db.ResolveXrefs(true, false);
-            PlotDatabase(db, Path.GetFileName(job.SourceFile), job, deviceName, styleSheet, settings);
-            return;
+            throw result.Error;
         }
-
-        PlotOpenedDocument(job, deviceName, styleSheet, settings);
     }
 
-    /** Preview：单张预览。激活目标布局并 Regen 一次后，按已有图框窗口 PreviewDatabase。 */
+    /** Preview：当前图走单文件 Regen；外部图走独立的打开文档预览路径。 */
     public static void Preview(PlotJob job, string deviceName, string styleSheet, Document currentDocument)
     {
         var settings = AppSettingsStore.Load();
         EnsureTextGeometryMode(deviceName, settings.ConvertTextToGeometryWhenPlotting);
         using var transparency = PlotTransparencyOverride.Apply(settings.PlotTransparency);
-        var oldActive = CadApp.DocumentManager.MdiActiveDocument;
-        var doc = IsCurrentDocumentJob(job, currentDocument) ? currentDocument : FindOpenDocument(job.SourceFile);
-        var shouldClose = doc == null;
-        doc ??= CadApp.DocumentManager.Open(job.SourceFile, false);
-
-        try
+        if (!IsCurrentDocumentJob(job, currentDocument))
         {
-            using (doc.LockDocument())
-            {
-                string? lastSpaceKey = null;
-                EnsureSpaceRegenerated(doc, job, ref lastSpaceKey);
-                // 首次扫描得到的图框信息已可用于预览，避免每次点击预览都重新扫描整张图纸。
-                PreviewDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, doc);
-            }
+            PreviewExternalFile(job, deviceName, styleSheet);
+            return;
         }
-        finally
-        {
-            if (shouldClose)
-            {
-                TryCloseWithoutSave(doc);
-            }
 
-            if (oldActive != null && !oldActive.IsDisposed)
-            {
-                CadApp.DocumentManager.MdiActiveDocument = oldActive;
-            }
+        using (currentDocument.LockDocument())
+        {
+            string? lastSpaceKey = null;
+            EnsureSpaceRegenerated(currentDocument, job, ref lastSpaceKey);
+            // 首次扫描得到的图框信息已可用于预览，避免每次点击预览都重新扫描整张图纸。
+            PreviewDatabase(currentDocument.Database, currentDocument.Name, job, deviceName, styleSheet, currentDocument);
         }
     }
 
-    /** GetPlotGroupKey：生成分组键：当前文档 / 侧开 Database / 已打开路径。 */
-    private static string GetPlotGroupKey(PlotJob job, Document currentDocument, AppSettings settings)
+    /** GetPlotGroupKey：当前打开图一组，外部图按完整路径一组。出图不再走侧库。 */
+    private static string GetPlotGroupKey(PlotJob job, Document currentDocument)
     {
         if (IsCurrentDocumentJob(job, currentDocument))
         {
             return "__CURRENT__";
         }
 
-        var file = string.IsNullOrWhiteSpace(job.SourceFile) ? "" : Path.GetFullPath(job.SourceFile);
-        return settings.OpenExternalDwgForPlot ? file : "__DB__:" + file;
+        return string.IsNullOrWhiteSpace(job.SourceFile) ? "" : Path.GetFullPath(job.SourceFile);
     }
 
     /** EnsureTextGeometryMode：按设置处理文本转几何相关模式。 */
@@ -235,53 +226,7 @@ public static partial class PlotterService
         }
     }
 
-    /** PlotOpenedDocumentGroup：已打开文档组：不切换活动文档，按已有窗口逐张出图。 */
-    private static void PlotOpenedDocumentGroup(
-        IReadOnlyList<PlotJob> jobs,
-        string sourceFile,
-        string deviceName,
-        string styleSheet,
-        AppSettings settings,
-        Action<PlotJob>? beforeJob,
-        List<PlotJobResult> results,
-        CancellationToken cancellationToken)
-    {
-        var doc = FindOpenDocument(sourceFile);
-        var shouldClose = doc == null;
-        doc ??= CadApp.DocumentManager.Open(sourceFile, false);
-
-        try
-        {
-            foreach (var job in jobs)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    beforeJob?.Invoke(job);
-                    using (doc.LockDocument())
-                    {
-                        PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
-                    }
-
-                    results.Add(new PlotJobResult { Job = job });
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    results.Add(new PlotJobResult { Job = job, Error = ex });
-                }
-            }
-        }
-        finally
-        {
-            if (shouldClose)
-            {
-                TryCloseWithoutSave(doc);
-            }
-        }
-    }
-
-    /** PlotSideDatabaseGroup：侧开 Database 组：只读库出图，不占用 UI 文档。 */
+    /** PlotSideDatabaseGroup：侧开 Database 组：只读库出图，不占用 UI 文档。出图入口已不再调用。 */
     private static void PlotSideDatabaseGroup(
         IReadOnlyList<PlotJob> jobs,
         string sourceFile,
@@ -310,35 +255,6 @@ public static partial class PlotterService
             catch (Exception ex)
             {
                 results.Add(new PlotJobResult { Job = job, Error = ex });
-            }
-        }
-    }
-
-    /** PlotOpenedDocument：打开或定位文档后执行一组任务。 */
-    private static void PlotOpenedDocument(PlotJob job, string deviceName, string styleSheet, AppSettings settings)
-    {
-        var oldActive = CadApp.DocumentManager.MdiActiveDocument;
-        var doc = FindOpenDocument(job.SourceFile);
-        var shouldClose = doc == null;
-        doc ??= CadApp.DocumentManager.Open(job.SourceFile, false);
-
-        try
-        {
-            using (doc.LockDocument())
-            {
-                PlotDatabase(doc.Database, doc.Name, job, deviceName, styleSheet, settings, doc);
-            }
-        }
-        finally
-        {
-            if (oldActive != null && !oldActive.IsDisposed)
-            {
-                CadApp.DocumentManager.MdiActiveDocument = oldActive;
-            }
-
-            if (shouldClose)
-            {
-                TryCloseWithoutSave(doc);
             }
         }
     }
