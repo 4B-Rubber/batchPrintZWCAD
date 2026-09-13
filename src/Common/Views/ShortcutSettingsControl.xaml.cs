@@ -42,14 +42,13 @@ public sealed partial class ShortcutSettingsControl : UserControl
             label.Children.Add(new TextBlock
             {
                 Text = command.CommandName,
-                Foreground = Brushes.Gray,
-                FontSize = 10
+                Foreground = Brushes.DimGray
             });
 
             var input = new TextBox
             {
                 MaxLength = 16,
-                MinHeight = 24,
+                MinHeight = 22,
                 VerticalAlignment = VerticalAlignment.Center,
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Text = FindCurrentAlias(currentAliases, command.CommandName)

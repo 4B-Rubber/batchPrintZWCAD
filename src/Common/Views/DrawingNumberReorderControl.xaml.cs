@@ -74,7 +74,7 @@ public sealed partial class DrawingNumberReorderControl : UserControl
         }
 
         var tail = _jobCount > samples ? " ..." : "";
-        PreviewLabel.Content = $"示例: {string.Join(", ", items)}{tail}  (共{_jobCount}张)";
+        PreviewLabel.Text = $"示例: {string.Join(", ", items)}{tail}  (共{_jobCount}张)";
     }
 
     private void OnTextChanged(object sender, RoutedEventArgs e) => UpdatePreview();

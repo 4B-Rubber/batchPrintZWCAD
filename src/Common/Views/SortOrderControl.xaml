@@ -1,28 +1,33 @@
 <UserControl x:Class="ZwcadBatchPlot.SortOrderControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             FontFamily="Microsoft YaHei" FontSize="12">
+             FontFamily="Microsoft YaHei UI" FontSize="11">
     <UserControl.Resources>
-        <Style x:Key="CellStyle" TargetType="Border">
-            <Setter Property="BorderBrush" Value="#FF888888"/>
-            <Setter Property="BorderThickness" Value="0.5"/>
-            <Setter Property="Background" Value="#FFF8F8F8"/>
-            <Setter Property="Width" Value="28"/>
-            <Setter Property="Height" Value="22"/>
-        </Style>
-        <Style x:Key="CellTextStyle" TargetType="TextBlock">
-            <Setter Property="HorizontalAlignment" Value="Center"/>
-            <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="FontSize" Value="10"/>
-            <Setter Property="Foreground" Value="#FF333333"/>
-        </Style>
-        <Style x:Key="HighlightCellStyle" TargetType="Border">
-            <Setter Property="BorderBrush" Value="#FF0078D7"/>
-            <Setter Property="BorderThickness" Value="0.5"/>
-            <Setter Property="Background" Value="#FFDDEEFF"/>
-            <Setter Property="Width" Value="28"/>
-            <Setter Property="Height" Value="22"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="WpfUi.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <Style x:Key="CellStyle" TargetType="Border">
+                <Setter Property="BorderBrush" Value="#FF888888"/>
+                <Setter Property="BorderThickness" Value="0.5"/>
+                <Setter Property="Background" Value="#FFF8F8F8"/>
+                <Setter Property="Width" Value="28"/>
+                <Setter Property="Height" Value="22"/>
+            </Style>
+            <Style x:Key="CellTextStyle" TargetType="TextBlock">
+                <Setter Property="HorizontalAlignment" Value="Center"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="FontSize" Value="11"/>
+                <Setter Property="Foreground" Value="#FF333333"/>
+            </Style>
+            <Style x:Key="HighlightCellStyle" TargetType="Border">
+                <Setter Property="BorderBrush" Value="#FF0078D7"/>
+                <Setter Property="BorderThickness" Value="0.5"/>
+                <Setter Property="Background" Value="#FFDDEEFF"/>
+                <Setter Property="Width" Value="28"/>
+                <Setter Property="Height" Value="22"/>
+            </Style>
+        </ResourceDictionary>
     </UserControl.Resources>
     <Grid Margin="12,10,12,8">
         <Grid.RowDefinitions>
@@ -32,13 +37,11 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- 标题 -->
         <TextBlock x:Name="DialogTitleText" Grid.Row="0" Text="选择批量打印排序方式" Margin="0,0,0,10"
-                   FontWeight="SemiBold" Foreground="#FF222222"/>
+                   FontWeight="SemiBold"/>
 
-        <!-- 仅图框块批量打印显示主排序依据；矩形框始终按位置排序。 -->
         <StackPanel x:Name="SortBasisPanel" Grid.Row="1" Margin="0,0,0,10">
-            <TextBlock Text="排序依据" Margin="0,0,0,5" Foreground="#FF333333"/>
+            <TextBlock Text="排序依据" Margin="0,0,0,5"/>
             <StackPanel Orientation="Horizontal">
                 <RadioButton x:Name="DrawingNumberSortRadio" GroupName="SortBasis" IsChecked="True"
                              Content="按图号排序" Margin="0,0,24,0"/>
@@ -46,24 +49,21 @@
                              Content="按图纸位置排序"/>
             </StackPanel>
             <TextBlock Text="按图号排序时，图号和图名都相同的图纸仍按下面的位置顺序排列。"
-                       Foreground="DimGray" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                       Foreground="DimGray" Margin="0,5,0,0" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <!-- 位置顺序：既用于完整的位置排序，也用于同图号同图名时的兜底排序。 -->
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 从上到下，从左到右 -->
             <StackPanel Grid.Column="0" Margin="0,0,8,0">
                 <RadioButton x:Name="TopToBottomRadio" IsChecked="True"
                              GroupName="SortOrder"
                              Margin="0,0,0,8" VerticalContentAlignment="Center">
                     <TextBlock Text="从上到下，从左到右" TextWrapping="Wrap"/>
                 </RadioButton>
-                <!-- 示意图：行优先，1~6 逐行填充 -->
                 <Border BorderBrush="#FFAAAAAA" BorderThickness="1"
                         HorizontalAlignment="Left" Padding="1">
                     <Grid>
@@ -85,18 +85,16 @@
                     </Grid>
                 </Border>
                 <TextBlock Text="先按行（从上到下），行内再从左到右"
-                           Foreground="DimGray" FontSize="10" Margin="0,4,0,0"
+                           Foreground="DimGray" Margin="0,4,0,0"
                            TextWrapping="Wrap"/>
             </StackPanel>
 
-            <!-- 从左到右，从上到下 -->
             <StackPanel Grid.Column="1" Margin="8,0,0,0">
                 <RadioButton x:Name="LeftToRightRadio"
                              GroupName="SortOrder"
                              Margin="0,0,0,8" VerticalContentAlignment="Center">
                     <TextBlock Text="从左到右，从上到下" TextWrapping="Wrap"/>
                 </RadioButton>
-                <!-- 示意图：列优先，1~6 逐列填充 -->
                 <Border BorderBrush="#FFAAAAAA" BorderThickness="1"
                         HorizontalAlignment="Left" Padding="1">
                     <Grid>
@@ -118,16 +116,17 @@
                     </Grid>
                 </Border>
                 <TextBlock Text="先按列（从左到右），列内再从上到下"
-                           Foreground="DimGray" FontSize="10" Margin="0,4,0,0"
+                           Foreground="DimGray" Margin="0,4,0,0"
                            TextWrapping="Wrap"/>
             </StackPanel>
         </Grid>
 
-        <!-- 按钮行 -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,10,0,0">
-            <Button Content="确定" Width="76" Height="26" Click="OnOkClick" Margin="0,0,4,0"/>
-            <Button Content="取消" Width="76" Height="26" Click="OnCancelClick"/>
+            <Button Content="确定" MinWidth="76" Style="{StaticResource PluginButtonStyle}"
+                    Click="OnOkClick" Margin="0,0,4,0"/>
+            <Button Content="取消" MinWidth="76" Style="{StaticResource PluginButtonStyle}"
+                    Click="OnCancelClick"/>
         </StackPanel>
     </Grid>
 </UserControl>

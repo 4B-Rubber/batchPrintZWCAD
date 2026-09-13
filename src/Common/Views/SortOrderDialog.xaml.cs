@@ -28,11 +28,10 @@ public sealed partial class SortOrderDialog : System.Windows.Window
             _wpfControl.CancelRequested += () => { DialogResult = false; Close(); };
             Content = _wpfControl;
 
-            // 与原 WinForms 壳一致：显示排序依据时对话框更高。
+            // 高度由 SizeToContent 按内容计算；显示主排序依据时仅抬高下限。
             if (showSortBasis)
             {
-                Height = 300;
-                MinHeight = 200;
+                MinHeight = 300;
             }
         }
         catch (Exception ex)
