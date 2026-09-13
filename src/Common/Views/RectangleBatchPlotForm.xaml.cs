@@ -365,8 +365,8 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void Grid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        // 只有多选行的候选纸张完全一致时，才允许统一修改纸张，避免套用到不适配的矩形框。
-        _changePaperItem.IsEnabled = TryGetCommonPaperOptions(HighlightedRows(), out _);
+        // 候选完全一致，或均可按同一套长宽比图幅名解释时，允许批量改纸。
+        _changePaperItem.IsEnabled = CanBatchChangePaper(HighlightedRows());
     }
 
     private void PrintCheck_Click(object sender, RoutedEventArgs e)
@@ -641,19 +641,11 @@ public sealed partial class RectangleBatchPlotForm : Window
             List<RectangleFrameScanner.Result> results;
             if (_lastScanScope.HasValue)
             {
-                results = RectangleFrameScanner.ScanScope(
-                    _document,
-                    _lastScanScope.Value,
-                    _settings.PaperMatchToleranceMm,
-                    _settings.RecognizeFourLineRectangleFrames);
+                results = ScanScopeWithProgress(_lastScanScope.Value);
             }
             else if (_scanWindow != null)
             {
-                results = RectangleFrameScanner.ScanWindow(
-                    _document,
-                    _scanWindow,
-                    _settings.PaperMatchToleranceMm,
-                    _settings.RecognizeFourLineRectangleFrames);
+                results = ScanWindowWithProgress(_scanWindow);
             }
             else
             {
@@ -670,6 +662,10 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             TransformResultsToDcs(results);
             LoadRows(results);
+        }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -689,11 +685,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
         try
         {
-            var results = RectangleFrameScanner.ScanScope(
-                _document,
-                scope.Value,
-                _settings.PaperMatchToleranceMm,
-                _settings.RecognizeFourLineRectangleFrames);
+            var results = ScanScopeWithProgress(scope.Value);
             if (results.Count == 0)
             {
                 MessageBox.Show("扫描范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
@@ -704,6 +696,10 @@ public sealed partial class RectangleBatchPlotForm : Window
             _lastScanScope = scope;
             _scanWindow = null;
             LoadRows(results);
+        }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -736,11 +732,7 @@ public sealed partial class RectangleBatchPlotForm : Window
                 second.Value,
                 _document.Database.TileMode);
 
-            var results = RectangleFrameScanner.ScanWindow(
-                _document,
-                window,
-                _settings.PaperMatchToleranceMm,
-                _settings.RecognizeFourLineRectangleFrames);
+            var results = ScanWindowWithProgress(window);
             if (results.Count == 0)
             {
                 MessageBox.Show("框选范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
@@ -752,6 +744,10 @@ public sealed partial class RectangleBatchPlotForm : Window
             _lastScanScope = null;
             LoadRows(results);
         }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
         catch (Exception ex)
         {
             MessageBox.Show("框选扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
@@ -760,6 +756,32 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
             CadWindowFocus.RestoreDialog(this);
         }
+    }
+
+    /// <summary>带进度窗执行范围扫描；用户取消时抛出 <see cref="OperationCanceledException"/>。</summary>
+    private List<RectangleFrameScanner.Result> ScanScopeWithProgress(TitleBlockScanScope scope)
+    {
+        using var session = RectangleScanProgressSession.Start(this);
+        return RectangleFrameScanner.ScanScope(
+            _document,
+            scope,
+            _settings.PaperMatchToleranceMm,
+            _settings.RecognizeFourLineRectangleFrames,
+            session.Progress,
+            session.Token);
+    }
+
+    /// <summary>带进度窗执行框选扫描。</summary>
+    private List<RectangleFrameScanner.Result> ScanWindowWithProgress(CadSelectionWindow window)
+    {
+        using var session = RectangleScanProgressSession.Start(this);
+        return RectangleFrameScanner.ScanWindow(
+            _document,
+            window,
+            _settings.PaperMatchToleranceMm,
+            _settings.RecognizeFourLineRectangleFrames,
+            session.Progress,
+            session.Token);
     }
 
     private void TransformResultsToDcs(List<RectangleFrameScanner.Result> results)
@@ -943,12 +965,28 @@ public sealed partial class RectangleBatchPlotForm : Window
     {
         _grid.CommitEdit(DataGridEditingUnit.Row, true);
         var rows = HighlightedRows();
-        if (!TryGetCommonPaperOptions(rows, out var options))
+        if (TryGetCommonPaperOptions(rows, out var identicalOptions))
         {
-            MessageBox.Show("只有所选矩形框的候选纸张尺寸完全一致时，才能批量修改纸张。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            ApplyBatchPaperFromSharedOptions(rows, identicalOptions);
             return;
         }
 
+        if (TryGetCommonAspectRatioPaperOptions(rows, out var aspectOptions))
+        {
+            ApplyBatchPaperByAspectRatioName(rows, aspectOptions);
+            return;
+        }
+
+        MessageBox.Show(
+            "所选矩形框没有完全相同的候选纸张，且无法用同一套标准/加长图幅（长宽比）统一改纸。",
+            Title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    /// <summary>候选列表完全一致时：直接套用同一条纸张检测结果。</summary>
+    private void ApplyBatchPaperFromSharedOptions(IReadOnlyList<Row> rows, IReadOnlyList<PaperDetection> options)
+    {
         var dialog = new SinglePlotPaperSelectionForm(options);
         if (CadDialog.ShowModal(dialog) != true)
         {
@@ -977,6 +1015,59 @@ public sealed partial class RectangleBatchPlotForm : Window
         UpdateVisuals();
     }
 
+    /// <summary>
+    /// 任意比例场景：用户选图幅名后，按各框自身尺寸重算比例并写入。
+    /// </summary>
+    private void ApplyBatchPaperByAspectRatioName(IReadOnlyList<Row> rows, IReadOnlyList<PaperDetection> aspectNameOptions)
+    {
+        var dialog = new SinglePlotPaperSelectionForm(aspectNameOptions);
+        if (CadDialog.ShowModal(dialog) != true)
+        {
+            return;
+        }
+
+        var selectedName = dialog.SelectedPaper.PaperName;
+        _suppressPaperEvents = true;
+        try
+        {
+            foreach (var row in rows)
+            {
+                if (!TryGetJobDrawingSize(row.Job, out var width, out var height))
+                {
+                    continue;
+                }
+
+                var aspectOptions = PaperSizeDetector.DetectRectangleBatchAspectRatioCandidates(
+                    width,
+                    height);
+                var match = aspectOptions.FirstOrDefault(paper =>
+                    string.Equals(paper.PaperName, selectedName, StringComparison.OrdinalIgnoreCase));
+                if (match == null)
+                {
+                    continue;
+                }
+
+                // 下拉改为该框完整长宽比候选，便于后续单行再改。
+                row.Options = aspectOptions;
+                row.PaperChoice = PaperSizeDetector.FormatOption(match);
+                ApplyPaper(row.Job, match);
+                row.RefreshFromJob();
+            }
+        }
+        finally
+        {
+            _suppressPaperEvents = false;
+        }
+
+        RefreshFileNames();
+        RefreshOutputPaths();
+        UpdateVisuals();
+    }
+
+    private static bool CanBatchChangePaper(IReadOnlyList<Row> rows)
+        => TryGetCommonPaperOptions(rows, out _)
+           || TryGetCommonAspectRatioPaperOptions(rows, out _);
+
     private static bool TryGetCommonPaperOptions(IReadOnlyList<Row> rows, out IReadOnlyList<PaperDetection> options)
     {
         options = new PaperDetection[0];
@@ -997,6 +1088,97 @@ public sealed partial class RectangleBatchPlotForm : Window
 
         options = first;
         return true;
+    }
+
+    /// <summary>
+    /// 各框尺寸不同导致候选比例不一致时，若都能按长宽比解释为同一批标准/加长图幅名，则允许按图幅名批量改纸。
+    /// </summary>
+    private static bool TryGetCommonAspectRatioPaperOptions(
+        IReadOnlyList<Row> rows,
+        out IReadOnlyList<PaperDetection> options)
+    {
+        options = new PaperDetection[0];
+        if (rows.Count == 0)
+        {
+            return false;
+        }
+
+        HashSet<string>? commonNames = null;
+        IReadOnlyList<PaperDetection>? firstAspect = null;
+        foreach (var row in rows)
+        {
+            if (!TryGetJobDrawingSize(row.Job, out var width, out var height))
+            {
+                return false;
+            }
+
+            var aspect = PaperSizeDetector.DetectRectangleBatchAspectRatioCandidates(
+                width,
+                height);
+            if (aspect.Count == 0)
+            {
+                return false;
+            }
+
+            firstAspect ??= aspect;
+            var names = new HashSet<string>(
+                aspect.Select(paper => paper.PaperName),
+                StringComparer.OrdinalIgnoreCase);
+            commonNames = commonNames == null
+                ? names
+                : new HashSet<string>(commonNames.Where(names.Contains), StringComparer.OrdinalIgnoreCase);
+            if (commonNames.Count == 0)
+            {
+                return false;
+            }
+        }
+
+        if (firstAspect == null || commonNames == null || commonNames.Count == 0)
+        {
+            return false;
+        }
+
+        // 展示用条目取自首框；真正应用时按各框尺寸重算比例。
+        options = firstAspect
+            .Where(paper => commonNames.Contains(paper.PaperName))
+            .GroupBy(paper => paper.PaperName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        return options.Count > 0;
+    }
+
+    /// <summary>读取作业对应的图面宽高（用于按长宽比重算纸张/比例）。</summary>
+    private static bool TryGetJobDrawingSize(PlotJob job, out double width, out double height)
+    {
+        width = 0;
+        height = 0;
+        if (job.UsesUserCoordinateSystem)
+        {
+            width = Math.Abs(job.UcsMaxX - job.UcsMinX);
+            height = Math.Abs(job.UcsMaxY - job.UcsMinY);
+            if (width > 1e-9d && height > 1e-9d)
+            {
+                return true;
+            }
+        }
+
+        if (job.CornerPoints is { Length: >= 8 } points)
+        {
+            width = Math.Sqrt(
+                (points[2] - points[0]) * (points[2] - points[0])
+                + (points[3] - points[1]) * (points[3] - points[1]));
+            height = Math.Sqrt(
+                (points[4] - points[2]) * (points[4] - points[2])
+                + (points[5] - points[3]) * (points[5] - points[3]));
+            if (width > 1e-9d && height > 1e-9d)
+            {
+                return true;
+            }
+        }
+
+        width = Math.Abs(job.MaxX - job.MinX);
+        height = Math.Abs(job.MaxY - job.MinY);
+        return width > 1e-9d && height > 1e-9d;
     }
 
     private static bool HasSamePaperOptions(IReadOnlyList<PaperDetection> first, IReadOnlyList<PaperDetection> second)

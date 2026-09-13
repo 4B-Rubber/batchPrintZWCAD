@@ -10,19 +10,38 @@ namespace ZwcadBatchPlot;
 /// </summary>
 public sealed partial class BatchPrintProgressWindow : Window
 {
-    private readonly Action _onCancel;
+    private Action _onCancel;
     private bool _forceClose;
     private bool _cancelRequested;
+    private readonly bool _scanMode;
 
-    public BatchPrintProgressWindow(int total, Action onCancel)
+    public BatchPrintProgressWindow(int total, Action onCancel, bool scanMode = false)
     {
         InitializeComponent();
         _onCancel = onCancel ?? throw new ArgumentNullException(nameof(onCancel));
-        _progressBar.Maximum = Math.Max(1, total);
-        _progressBar.Value = 0;
-        _countText.Text = $"0 / {total}";
+        _scanMode = scanMode;
+        if (_scanMode)
+        {
+            Title = "识别图框";
+            _titleText.Text = "正在识别图框…";
+            _stopButton.Content = "取消";
+            _progressBar.IsIndeterminate = true;
+            _countText.Text = "";
+            _detailText.Text = "准备扫描…";
+        }
+        else
+        {
+            _progressBar.Maximum = Math.Max(1, total);
+            _progressBar.Value = 0;
+            _countText.Text = $"0 / {total}";
+        }
+
         Closing += OnClosing;
     }
+
+    /// <summary>构造后替换取消回调（识别进度会话需先创建再绑定）。</summary>
+    internal void ReplaceCancelHandler(Action onCancel)
+        => _onCancel = onCancel ?? throw new ArgumentNullException(nameof(onCancel));
 
     /// <summary>更新已开始张数与当前任务说明（completed 从 1 计到 total）。</summary>
     public void Report(int completed, int total, string detail)
@@ -38,6 +57,24 @@ public sealed partial class BatchPrintProgressWindow : Window
         _countText.Text = $"{Math.Max(0, completed)} / {total}";
         _titleText.Text = completed >= total ? "即将完成…" : "正在批量打印…";
         _detailText.Text = string.IsNullOrWhiteSpace(detail) ? "准备中…" : detail;
+    }
+
+    /// <summary>识别图框进度：total≤0 时用不确定进度条，并显示已处理数量。</summary>
+    public void ReportScan(int current, int total, string detail, string? title = null)
+    {
+        _titleText.Text = string.IsNullOrWhiteSpace(title) ? "正在识别图框…" : title;
+        _detailText.Text = string.IsNullOrWhiteSpace(detail) ? "准备扫描…" : detail;
+        if (total <= 0)
+        {
+            _progressBar.IsIndeterminate = true;
+            _countText.Text = current > 0 ? current.ToString("N0") : "";
+            return;
+        }
+
+        _progressBar.IsIndeterminate = false;
+        _progressBar.Maximum = Math.Max(1, total);
+        _progressBar.Value = Math.Max(0, Math.Min(current, total));
+        _countText.Text = $"{current} / {total}";
     }
 
     /// <summary>进入合并等阶段：进度条拉满并改说明文字。</summary>
@@ -90,8 +127,8 @@ public sealed partial class BatchPrintProgressWindow : Window
 
         _cancelRequested = true;
         _stopButton.IsEnabled = false;
-        _stopButton.Content = "正在停止…";
-        _titleText.Text = "正在停止…";
+        _stopButton.Content = _scanMode ? "正在取消…" : "正在停止…";
+        _titleText.Text = _scanMode ? "正在取消…" : "正在停止…";
         try
         {
             _onCancel();

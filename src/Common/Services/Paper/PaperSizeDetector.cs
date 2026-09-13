@@ -117,6 +117,12 @@ public static class PaperSizeDetector
     /// </summary>
     public const double AspectRatioMatchTolerance = 0.01d;
 
+    /// <summary>
+    /// 矩形批打补录容差：短边毫米匹配失败后，一次按长宽比判断标准/标准加长图幅并反推任意比例。
+    /// 命中任一标准 A 图幅后会展开 A0~A4 供换算改纸（毫米尺寸四舍五入导致互相比值略有差异）。
+    /// </summary>
+    public const double RectangleAspectRatioMatchTolerance = 0.001d;
+
     private static readonly int[] IntegerScales = { 1, 2, 4, 5, 8, 10, 20, 25, 50, 100, 200, 500, 1000 };
 
     /// <summary>
@@ -590,6 +596,198 @@ public static class PaperSizeDetector
                 : new[] { 100d, 1d },
             ExtraScales = customScales
         };
+    }
+
+    /// <summary>
+    /// 矩形批打纸张候选：
+    /// 1) 比例库短边毫米匹配；
+    /// 2) 失败则按长宽比命中图幅并反推任意比例，并展开同系列标准 A 图幅供改纸。
+    /// </summary>
+    public static IReadOnlyList<PaperDetection> DetectRectangleBatchCandidates(
+        double width,
+        double height,
+        DetectionOptions options)
+    {
+        var candidates = DetectCandidates(width, height, options);
+        if (candidates.Count > 0)
+        {
+            return candidates;
+        }
+
+        return DetectRectangleBatchAspectRatioCandidates(width, height);
+    }
+
+    /// <summary>
+    /// 矩形批打长宽比候选（含同系列 A0~A4 展开），供扫描下拉与批量改纸共用。
+    /// </summary>
+    public static IReadOnlyList<PaperDetection> DetectRectangleBatchAspectRatioCandidates(
+        double width,
+        double height)
+    {
+        return OrderAspectRatioCandidatesForRectangleBatch(
+            width,
+            height,
+            ExpandStandardASeriesAspectCandidates(
+                width,
+                height,
+                DetectByAspectRatio(width, height, RectangleAspectRatioMatchTolerance)));
+    }
+
+    /// <summary>
+    /// ISO A0~A4 的毫米尺寸经四舍五入后长宽比并不完全相同；紧容差下精确某一号图框往往只命中自身。
+    /// 任意比例路径下仍展开其余标准号，便于用户改纸并换算比例。加长图保持原命中结果。
+    /// </summary>
+    private static IReadOnlyList<PaperDetection> ExpandStandardASeriesAspectCandidates(
+        double width,
+        double height,
+        IReadOnlyList<PaperDetection> aspectMatches)
+    {
+        if (aspectMatches.Count == 0)
+        {
+            return aspectMatches;
+        }
+
+        var hasStandardA = false;
+        foreach (var match in aspectMatches)
+        {
+            if (match.IsLong)
+            {
+                continue;
+            }
+
+            foreach (var standard in Standards)
+            {
+                if (string.Equals(standard.Name, match.PaperName, StringComparison.OrdinalIgnoreCase))
+                {
+                    hasStandardA = true;
+                    break;
+                }
+            }
+
+            if (hasStandardA)
+            {
+                break;
+            }
+        }
+
+        if (!hasStandardA)
+        {
+            return aspectMatches;
+        }
+
+        var actualWidth = Math.Abs(width);
+        var actualHeight = Math.Abs(height);
+        var actualShort = Math.Min(actualWidth, actualHeight);
+        if (actualShort <= 1e-9d)
+        {
+            return aspectMatches;
+        }
+
+        var landscape = actualWidth >= actualHeight;
+        var byName = new Dictionary<string, PaperDetection>(StringComparer.OrdinalIgnoreCase);
+        foreach (var match in aspectMatches)
+        {
+            if (!byName.ContainsKey(match.PaperName))
+            {
+                byName[match.PaperName] = match;
+            }
+        }
+
+        for (var i = Standards.Length - 1; i >= 0; i--)
+        {
+            var paper = Standards[i];
+            if (byName.ContainsKey(paper.Name))
+            {
+                continue;
+            }
+
+            var scale = actualShort / paper.ShortSide;
+            if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0d)
+            {
+                continue;
+            }
+
+            byName[paper.Name] = new PaperDetection
+            {
+                PaperName = paper.Name,
+                ScaleValue = scale,
+                ScaleText = ToScaleText(scale),
+                IsLong = false,
+                PaperWidthMm = landscape ? paper.LongSide : paper.ShortSide,
+                PaperHeightMm = landscape ? paper.ShortSide : paper.LongSide,
+                Note = $"{paper.Name} 标准图幅（同系列换算），按任意比例 {ToScaleText(scale)}"
+            };
+        }
+
+        var expanded = new List<PaperDetection>(byName.Count);
+        for (var i = Standards.Length - 1; i >= 0; i--)
+        {
+            if (byName.TryGetValue(Standards[i].Name, out var standardMatch) && !standardMatch.IsLong)
+            {
+                expanded.Add(standardMatch);
+            }
+        }
+
+        foreach (var match in aspectMatches)
+        {
+            if (!match.IsLong)
+            {
+                continue;
+            }
+
+            var already = false;
+            foreach (var item in expanded)
+            {
+                if (string.Equals(item.PaperName, match.PaperName, StringComparison.OrdinalIgnoreCase))
+                {
+                    already = true;
+                    break;
+                }
+            }
+
+            if (!already)
+            {
+                expanded.Add(match);
+            }
+        }
+
+        return expanded;
+    }
+
+    /// <summary>
+    /// 长宽比候选排序：把 <see cref="IndexOfPreferredAspectRatioPaper"/> 选出的默认项置顶，其余保持原序。
+    /// </summary>
+    private static IReadOnlyList<PaperDetection> OrderAspectRatioCandidatesForRectangleBatch(
+        double width,
+        double height,
+        IReadOnlyList<PaperDetection> aspectMatches)
+    {
+        if (aspectMatches.Count == 0)
+        {
+            return aspectMatches;
+        }
+
+        var preferredIndex = IndexOfPreferredAspectRatioPaper(width, height, aspectMatches);
+        if (preferredIndex <= 0)
+        {
+            return aspectMatches.Count <= 12
+                ? aspectMatches
+                : aspectMatches.Take(12).ToList();
+        }
+
+        var ordered = new List<PaperDetection>(Math.Min(12, aspectMatches.Count))
+        {
+            aspectMatches[preferredIndex]
+        };
+        for (var i = 0; i < aspectMatches.Count && ordered.Count < 12; i++)
+        {
+            if (i != preferredIndex)
+            {
+                ordered.Add(aspectMatches[i]);
+            }
+        }
+
+        return ordered;
     }
 
     private static List<PaperCandidate> GetCandidateDetails(double width, double height, DetectionOptions options)
