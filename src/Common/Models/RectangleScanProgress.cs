@@ -2,18 +2,18 @@ using System;
 
 namespace ZwcadBatchPlot;
 
-/// <summary>¾ØĞÎÍ¼¿òÉ¨Ãè½ø¶È¿ìÕÕ¡£</summary>
+/// <summary>çŸ©å½¢å›¾æ¡†æ‰«æè¿›åº¦å¿«ç…§ã€‚</summary>
 public sealed class RectangleScanProgress
 {
-    /// <summary>½ø¶ÈÌõ±êÌâ£¬ÀıÈç¡¸ÕıÔÚÊ¶±ğÍ¼¿ò¡­¡¹¡£</summary>
-    public string Title { get; set; } = "ÕıÔÚÊ¶±ğÍ¼¿ò¡­";
+    /// <summary>è¿›åº¦æ¡æ ‡é¢˜ï¼Œä¾‹å¦‚ã€Œæ­£åœ¨è¯†åˆ«å›¾æ¡†â€¦ã€ã€‚</summary>
+    public string Title { get; set; } = "æ­£åœ¨è¯†åˆ«å›¾æ¡†â€¦";
 
-    /// <summary>µ±Ç°½×¶ÎËµÃ÷¡£</summary>
+    /// <summary>å½“å‰é˜¶æ®µè¯´æ˜ã€‚</summary>
     public string Detail { get; set; } = "";
 
-    /// <summary>ÒÑÍê³ÉÁ¿£»Óë <see cref="Total"/> Í¬Ê±´óÓÚ 0 Ê±ÏÔÊ¾È·¶¨½ø¶È¡£</summary>
+    /// <summary>å·²å®Œæˆé‡ï¼›ä¸ <see cref="Total"/> åŒæ—¶å¤§äº 0 æ—¶æ˜¾ç¤ºç¡®å®šè¿›åº¦ã€‚</summary>
     public int Current { get; set; }
 
-    /// <summary>×ÜÁ¿£»Îª 0 Ê±½ø¶ÈÌõ²»È·¶¨£¨¹ö¶¯£©¡£</summary>
+    /// <summary>æ€»é‡ï¼›ä¸º 0 æ—¶è¿›åº¦æ¡ä¸ç¡®å®šï¼ˆæ»šåŠ¨ï¼‰ã€‚</summary>
     public int Total { get; set; }
 }

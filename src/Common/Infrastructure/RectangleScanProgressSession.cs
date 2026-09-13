@@ -6,7 +6,7 @@ using System.Windows.Threading;
 namespace ZwcadBatchPlot;
 
 /// <summary>
-/// ??????????????????????????????????????????
+/// 矩形图框扫描进度会话：弹出可取消进度窗，并向扫描过程转发进度。
 /// </summary>
 internal sealed class RectangleScanProgressSession : IDisposable
 {
@@ -23,7 +23,7 @@ internal sealed class RectangleScanProgressSession : IDisposable
 
     public IProgress<RectangleScanProgress> Progress { get; private set; } = null!;
 
-    /// <summary>???????????</summary>
+    /// <summary>创建并显示识别进度窗。</summary>
     public static RectangleScanProgressSession Start(Window owner)
     {
         var window = new BatchPrintProgressWindow(1, () => { }, scanMode: true)
@@ -36,12 +36,12 @@ internal sealed class RectangleScanProgressSession : IDisposable
         }
 
         var session = new RectangleScanProgressSession(window);
-        // ???????????????????????????????
+        // 需先构造窗口，再绑定取消回调（构造时占位，避免循环依赖）。
         window.ReplaceCancelHandler(session.RequestCancel);
         session.Progress = new SynchronousProgress(session.OnProgress);
         window.Show();
         window.Activate();
-        window.ReportScan(0, 0, "??????u");
+        window.ReportScan(0, 0, "准备扫描…");
         Pump(window);
         return session;
     }
@@ -89,7 +89,7 @@ internal sealed class RectangleScanProgressSession : IDisposable
     private static void Pump(DispatcherObject source)
         => source.Dispatcher.Invoke(DispatcherPriority.Background, new Action(() => { }));
 
-    /// <summary>ͬ������ת����ȷ�� CAD ͬ�߳�ɨ��ʱ���ȴ�����ˢ�¡�</summary>
+    /// <summary>同步进度转发，确保 CAD 同线程扫描时进度窗立即刷新。</summary>
     private sealed class SynchronousProgress : IProgress<RectangleScanProgress>
     {
         private readonly Action<RectangleScanProgress> _handler;
