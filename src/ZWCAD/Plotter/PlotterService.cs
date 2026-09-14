@@ -149,12 +149,18 @@ public static partial class PlotterService
         }
     }
 
-    /** Preview：当前图走单文件 Regen；外部图走独立的打开文档预览路径。 */
+    /** Preview：当前图走单文件 Regen；外部图须已在应用上下文打开，否则走独立打开路径。 */
     public static void Preview(PlotJob job, string deviceName, string styleSheet, Document currentDocument)
     {
         var settings = AppSettingsStore.Load();
         EnsureTextGeometryMode(deviceName, settings.ConvertTextToGeometryWhenPlotting);
         using var transparency = PlotTransparencyOverride.Apply(settings.PlotTransparency);
+        var active = CadApp.DocumentManager.MdiActiveDocument;
+        if (active != null && IsCurrentDocumentJob(job, active))
+        {
+            currentDocument = active;
+        }
+
         if (!IsCurrentDocumentJob(job, currentDocument))
         {
             PreviewExternalFile(job, deviceName, styleSheet);

@@ -2285,8 +2285,8 @@ public sealed partial class BatchPlotForm : Window
         job.LeavePaperMargin = SupportsLeaveMargin && _leaveMarginCheckBox.IsChecked == true;
         job.PaperMarginMm = ReadMarginValue(_marginInput);
         var wasVisible = IsVisible;
-        // 非模态按钮处于应用上下文；PlotEngine 交互预览必须进命令上下文，否则会「假启动」
-        // （预览窗出来但滚轮仍归主编辑器）。先准备纸张并隐藏本窗，再 SendStringToExecute 拉起内部命令。
+        // 非模态按钮处于应用上下文；PlotEngine 交互预览必须进文档命令上下文，否则会「假启动」
+        // （预览窗出来但滚轮仍归主编辑器）。外部图先在应用上下文打开，再投递内部命令。
         CadWindowFocus.HideForCadInput(this);
         try
         {
@@ -2299,7 +2299,7 @@ public sealed partial class BatchPlotForm : Window
             PrepareCustomPaperRegistrations(previewJobs, device);
             AppendLog("INFO", $"CAD 内部预览 {job.DrawingNumber}_{job.Title}");
 
-            PendingPlotPreview.Queue(new PendingPlotPreview.Request
+            PendingPlotPreview.Start(new PendingPlotPreview.Request
             {
                 Job = job,
                 DeviceName = device,
@@ -2321,10 +2321,7 @@ public sealed partial class BatchPlotForm : Window
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }
-            });
-
-            var doc = CadApp.DocumentManager.MdiActiveDocument ?? _currentDocument;
-            doc.SendStringToExecute("_ZBP_INTERNAL_PREVIEW ", true, false, false);
+            }, Dispatcher);
         }
         catch (Exception ex)
         {

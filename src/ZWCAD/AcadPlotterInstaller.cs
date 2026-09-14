@@ -532,6 +532,42 @@ public static class AcadPlotterInstaller
     }
 
     /// <summary>
+    /// 枚举 CAD 选项/系统变量里已配置且磁盘上存在的打印样式表搜索路径（STYLESMANAGER 同一套目录）。
+    /// 用户改过默认 CTB 目录后，编辑/打开样式必须走这里，不能回退到 Plotters 默认文件夹。
+    /// </summary>
+    public static IReadOnlyList<string> GetPlotStyleSearchDirectories()
+    {
+        var directories = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawPaths in new[]
+                 {
+                     ReadPreferenceFilesPath("PrinterStyleSheetPath"),
+                     GetSystemVariableString("PrinterStyleSheetDir")
+                 })
+        {
+            foreach (var configuredPath in ExpandSupportPaths(rawPaths))
+            {
+                if (!Directory.Exists(configuredPath))
+                    continue;
+
+                try
+                {
+                    var fullPath = Path.GetFullPath(configuredPath);
+                    if (seen.Add(fullPath))
+                        directories.Add(fullPath);
+                }
+                catch
+                {
+                    // 忽略单个无效路径。
+                }
+            }
+        }
+
+        return directories;
+    }
+
+    /// <summary>
     /// 通过 COM Preferences.Files 读取打印机支持路径；失败时返回空串，由系统变量回退。
     /// </summary>
     private static string ReadPreferenceFilesPath(string propertyName)

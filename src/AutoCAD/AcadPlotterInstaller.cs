@@ -1928,6 +1928,35 @@ public static class AcadPlotterInstaller
     }
 
     /// <summary>
+    /// 枚举 CAD 选项里已配置且磁盘上存在的打印样式表搜索路径（STYLESMANAGER 同一套目录）。
+    /// 用户改过默认 CTB 目录后，编辑/打开样式必须走这里，不能回退到 Plotters 默认文件夹。
+    /// </summary>
+    public static IReadOnlyList<string> GetPlotStyleSearchDirectories()
+    {
+        var directories = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stylePath = ReadPreferenceFilesPath("PrinterStyleSheetPath");
+        foreach (var configuredPath in ExpandPrinterConfigPaths(stylePath))
+        {
+            if (!Directory.Exists(configuredPath))
+                continue;
+
+            try
+            {
+                var fullPath = Path.GetFullPath(configuredPath);
+                if (seen.Add(fullPath))
+                    directories.Add(fullPath);
+            }
+            catch
+            {
+                // 单个无效路径不影响检查其余搜索目录。
+            }
+        }
+
+        return directories;
+    }
+
+    /// <summary>
     /// 判断 LA 绘图仪文件是否允许由插件修改：位于用户配置的任一打印机搜索目录内，
     /// 或位于当前 CAD 用户配置根目录内即可，不要求必须是搜索路径第一项。
     /// </summary>
@@ -1950,6 +1979,12 @@ public static class AcadPlotterInstaller
     }
 
     private static string ReadPrinterConfigPathFromPreferences()
+        => ReadPreferenceFilesPath("PrinterConfigPath");
+
+    /// <summary>
+    /// 通过 COM Preferences.Files 读取打印机支持路径；失败时返回空串。
+    /// </summary>
+    private static string ReadPreferenceFilesPath(string propertyName)
     {
         try
         {
@@ -1981,7 +2016,7 @@ public static class AcadPlotterInstaller
                 return "";
 
             return files.GetType().InvokeMember(
-                       "PrinterConfigPath",
+                       propertyName,
                        BindingFlags.GetProperty,
                        null,
                        files,

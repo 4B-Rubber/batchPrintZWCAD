@@ -182,76 +182,69 @@ internal static class PlotStyleManager
         }
 
         var stylePath = ResolveStylePath(selectedStyle) ?? "";
-        if (string.IsNullOrWhiteSpace(stylePath))
+        if (!string.IsNullOrWhiteSpace(stylePath) && TryOpenStyleFile(stylePath))
         {
+            return;
+        }
+
+        // 找不到磁盘文件，或 .ctb 未关联编辑器时，交给 CAD 自己的打印样式管理器。
+        if (TryOpenCadPlotStyleManager())
+        {
+            var hint = string.IsNullOrWhiteSpace(stylePath)
+                ? $"未在当前 CAD 的打印样式搜索路径中定位“{selectedStyle}”。已打开 CAD 打印样式管理器，请双击该文件进行修改。"
+                : $"无法直接启动打印样式表编辑器。已打开 CAD 打印样式管理器，请双击“{selectedStyle}”进行修改。";
             MessageBox.Show(
                 owner,
-                $"未找到打印样式文件“{selectedStyle}”。请检查当前 CAD 的打印样式搜索路径。",
+                hint,
                 "打印样式设置",
                 MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                MessageBoxImage.Information);
             return;
+        }
+
+        MessageBox.Show(
+            owner,
+            $"无法打开打印样式“{selectedStyle}”。请在 CAD 中运行 STYLESMANAGER，确认选项里的打印样式表搜索路径。",
+            "打印样式设置",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
+    /**
+     * ResolveStylePath：按 CAD 当前打印样式搜索路径定位 CTB。
+     * 不拼默认 Plotters 目录；用户改过选项中的样式表路径后仍应能打开同一份文件。
+     */
+    private static string? ResolveStylePath(string styleSheet)
+    {
+        var raw = (styleSheet ?? "").Trim();
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
         }
 
         try
         {
-            // CTB 文件由 CAD 安装程序注册到打印样式表编辑器，直接打开即可修改当前选中的样式。
-            Process.Start(new ProcessStartInfo
+            if (Path.IsPathRooted(raw) && File.Exists(raw))
             {
-                FileName = stylePath,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            if (TryRevealStyleFile(stylePath))
-            {
-                MessageBox.Show(
-                    owner,
-                    $"无法直接启动打印样式表编辑器，已在资源管理器中定位“{selectedStyle}”。\n请双击该文件进行修改。\n\n{ex.Message}",
-                    "打印样式设置",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-                return;
+                return Path.GetFullPath(raw);
             }
-
-            MessageBox.Show(
-                owner,
-                $"无法打开打印样式“{selectedStyle}”。\n\n{ex.Message}",
-                "打印样式设置",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
         }
-    }
+        catch
+        {
+            // 非法路径继续按文件名在 CAD 搜索路径中查找。
+        }
 
-    private static string? ResolveStylePath(string styleSheet)
-    {
-        var document = CadApp.DocumentManager.MdiActiveDocument;
-        if (document != null)
+        var fileName = NormalizeStyleName(raw);
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return null;
+        }
+
+        foreach (var directory in AcadPlotterInstaller.GetPlotStyleSearchDirectories())
         {
             try
             {
-                // 让当前 CAD 按自身配置的打印样式搜索路径解析，避免硬编码版本或用户目录。
-                var resolved = HostApplicationServices.Current.FindFile(
-                    styleSheet,
-                    document.Database,
-                    FindFileHint.Default);
-                if (!string.IsNullOrWhiteSpace(resolved) && File.Exists(resolved))
-                {
-                    return Path.GetFullPath(resolved);
-                }
-            }
-            catch
-            {
-                // 部分 CAD 版本不会通过 FindFile 返回 CTB，继续检查当前用户配置目录。
-            }
-        }
-
-        foreach (var directory in GetCandidateStyleDirectories())
-        {
-            try
-            {
-                var candidate = Path.Combine(directory, styleSheet);
+                var candidate = Path.Combine(directory, fileName);
                 if (File.Exists(candidate))
                 {
                     return Path.GetFullPath(candidate);
@@ -263,42 +256,93 @@ internal static class PlotStyleManager
             }
         }
 
-        return null;
+        // 图纸目录等支持路径中的 CTB，CAD 打印时也能用；样式表搜索路径未包含时再问 FindFile。
+        return TryFindStyleFileWithCad(fileName);
     }
 
-    private static IEnumerable<string> GetCandidateStyleDirectories()
+    /** TryFindStyleFileWithCad：让当前 CAD 按自身支持文件搜索解析 CTB 文件名。 */
+    private static string? TryFindStyleFileWithCad(string fileName)
     {
-        var plottersDirectory = AcadPlotterInstaller.GetPlottersDirectory();
-        if (!string.IsNullOrWhiteSpace(plottersDirectory))
+        var document = CadApp.DocumentManager.MdiActiveDocument;
+        if (document == null)
         {
-            yield return plottersDirectory;
-            yield return Path.Combine(plottersDirectory, "Plot Styles");
+            return null;
         }
 
-        var configuredStyleDirectory = GetSystemVariableString("PrinterStyleSheetDir");
-        if (!string.IsNullOrWhiteSpace(configuredStyleDirectory))
-        {
-            yield return configuredStyleDirectory;
-        }
-
-        var roamableRoot = GetSystemVariableString("ROAMABLEROOTPREFIX");
-        if (!string.IsNullOrWhiteSpace(roamableRoot))
-        {
-            // AutoCAD 与 ZWCAD 的当前用户打印样式目录名称不同，均从宿主返回的根目录派生。
-            yield return Path.Combine(roamableRoot, "Plotters", "Plot Styles");
-            yield return Path.Combine(roamableRoot, "Printstyle");
-        }
-    }
-
-    private static string GetSystemVariableString(string name)
-    {
         try
         {
-            return CadApp.GetSystemVariable(name)?.ToString() ?? "";
+            var resolved = HostApplicationServices.Current.FindFile(
+                fileName,
+                document.Database,
+                FindFileHint.Default);
+            if (!string.IsNullOrWhiteSpace(resolved) && File.Exists(resolved))
+            {
+                return Path.GetFullPath(resolved);
+            }
         }
         catch
         {
-            return "";
+            // 部分 CAD 版本不会通过 FindFile 返回 CTB，改走选项中的打印样式表搜索路径。
+        }
+
+        return null;
+    }
+
+    /** TryOpenStyleFile：用系统关联的打印样式表编辑器打开 CTB。 */
+    private static bool TryOpenStyleFile(string stylePath)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = stylePath,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return TryRevealStyleFile(stylePath);
+        }
+    }
+
+    /**
+     * TryOpenCadPlotStyleManager：执行 CAD 的 STYLESMANAGER，打开当前配置的打印样式目录。
+     * 无活动文档时改为直接打开选项里的第一个样式表搜索目录。
+     */
+    private static bool TryOpenCadPlotStyleManager()
+    {
+        var document = CadApp.DocumentManager.MdiActiveDocument;
+        if (document != null)
+        {
+            try
+            {
+                document.SendStringToExecute("_.STYLESMANAGER ", true, false, false);
+                return true;
+            }
+            catch
+            {
+            }
+        }
+
+        var firstDirectory = AcadPlotterInstaller.GetPlotStyleSearchDirectories().FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstDirectory) || !Directory.Exists(firstDirectory))
+        {
+            return false;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = firstDirectory,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 

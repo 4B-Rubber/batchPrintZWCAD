@@ -107,7 +107,9 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
     public void RectangleBatchPlotLegacy() => ShowRectangleBatchPlotCore();
 
     /**
-     * 非模态窗预览入口：由 SendStringToExecute 拉起，确保 PlotEngine 在命令上下文中启动。
+     * 非模态窗预览入口：由 SendStringToExecute 拉起，确保 PlotEngine 在文档命令上下文中启动。
+     * 必须保持文档上下文（不要加 Session），否则预览窗会「假启动」、滚轮仍归主编辑器。
+     * 外部图须先在应用上下文 PrepareJobDocument，再对本命令投递；此处禁止 Open/切文档。
      * NoHistory：不污染用户命令历史。
      */
     [CommandMethod("_ZBP_INTERNAL_PREVIEW", CommandFlags.NoHistory)]

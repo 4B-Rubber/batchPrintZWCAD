@@ -1,8 +1,15 @@
 using System;
+using System.Windows.Threading;
 #if AUTOCAD
 using Autodesk.AutoCAD.ApplicationServices;
+#if ACAD_CORE
+using CadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+#else
+using CadApp = Autodesk.AutoCAD.ApplicationServices.Application;
+#endif
 #else
 using ZwSoft.ZwCAD.ApplicationServices;
+using CadApp = ZwSoft.ZwCAD.ApplicationServices.Application;
 #endif
 
 namespace ZwcadBatchPlot;
@@ -13,6 +20,9 @@ namespace ZwcadBatchPlot;
  *
  * AutoCAD PlotEngine 交互预览必须在命令/文档上下文中启动；按钮事件处于应用上下文，
  * 直接 Preview 会出现「假启动」（画面出来但滚轮仍归主编辑器）。
+ *
+ * 外部图不能在文档命令里 Open。Start 先在应用上下文打开并激活源 DWG，
+ * 再对该文档 SendStringToExecute；预览结束后在 Idle 里归还/关闭。
  */
 internal static class PendingPlotPreview
 {
@@ -30,6 +40,50 @@ internal static class PendingPlotPreview
         public Document Document { get; set; } = null!;
         public Action? OnFinally { get; set; }
         public Action<Exception>? OnError { get; set; }
+    }
+
+    /**
+     * Start：应用上下文准备源文档，再投递文档上下文预览命令。
+     * dispatcher 用于预览命令结束后再关本次打开的 DWG。
+     */
+    public static void Start(Request request, Dispatcher dispatcher)
+    {
+        var oldActive = CadApp.DocumentManager.MdiActiveDocument;
+        var openedByUs = false;
+        Document? previewDoc = null;
+        try
+        {
+            previewDoc = PlotterService.PrepareJobDocument(request.Job, request.Document, out openedByUs);
+            request.Document = previewDoc;
+            var userFinally = request.OnFinally;
+            var docToRelease = previewDoc;
+            request.OnFinally = () =>
+            {
+                try
+                {
+                    userFinally?.Invoke();
+                }
+                finally
+                {
+                    dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+                    {
+                        PlotterService.ReleaseTemporaryDocument(oldActive, docToRelease, openedByUs);
+                    }));
+                }
+            };
+            Queue(request);
+            previewDoc.SendStringToExecute("_ZBP_INTERNAL_PREVIEW ", true, false, false);
+        }
+        catch
+        {
+            Take();
+            if (previewDoc != null)
+            {
+                PlotterService.ReleaseTemporaryDocument(oldActive, previewDoc, openedByUs);
+            }
+
+            throw;
+        }
     }
 
     /** Queue：覆盖写入下一次内部预览命令要消费的请求。 */

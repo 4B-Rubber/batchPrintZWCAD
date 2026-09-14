@@ -452,7 +452,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             ApplyLeaveMarginSelection(previewJobs);
             CustomPaperBatchPreparer.Prepare(previewJobs, device);
 
-            PendingPlotPreview.Queue(new PendingPlotPreview.Request
+            PendingPlotPreview.Start(new PendingPlotPreview.Request
             {
                 Job = row.Job,
                 DeviceName = device,
@@ -464,10 +464,7 @@ public sealed partial class RectangleBatchPlotForm : Window
                     Title,
                     MessageBoxButton.OK,
                     MessageBoxImage.Error)
-            });
-
-            var doc = CadApp.DocumentManager.MdiActiveDocument ?? _document;
-            doc.SendStringToExecute("_ZBP_INTERNAL_PREVIEW ", true, false, false);
+            }, Dispatcher);
         }
         catch (Exception ex)
         {
