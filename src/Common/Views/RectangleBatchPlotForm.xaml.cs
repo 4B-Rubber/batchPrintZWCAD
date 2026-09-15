@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -666,11 +667,61 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show("重新识别矩形框失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowScanFailure("重新识别矩形框失败", ex);
         }
     }
 
     private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
+
+    /// <summary>
+    /// 扫描失败时把完整异常给用户看（弹窗 + 剪贴板 + 日志），避免只剩 eNotApplicable 无法反馈。
+    /// </summary>
+    private void ShowScanFailure(string action, Exception ex)
+    {
+        var detail = ex.ToString();
+        try
+        {
+            _document.Editor.WriteMessage("\n" + action + "\n" + detail + "\n");
+        }
+        catch
+        {
+        }
+
+        var logPath = "";
+        try
+        {
+            Directory.CreateDirectory(BatchPlotLogger.LogDirectory);
+            logPath = Path.Combine(
+                BatchPlotLogger.LogDirectory,
+                "ScanError_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".log");
+            File.WriteAllText(logPath, action + Environment.NewLine + detail, Encoding.UTF8);
+        }
+        catch
+        {
+            logPath = "";
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(detail);
+        }
+        catch
+        {
+        }
+
+        var body = action + "\n\n" + detail;
+        body += string.IsNullOrWhiteSpace(logPath)
+            ? "\n\n完整内容已尝试复制到剪贴板。"
+            : "\n\n完整内容已复制到剪贴板，并写入日志:\n" + logPath;
+
+        const int maxChars = 6000;
+        if (body.Length > maxChars)
+        {
+            body = body.Substring(0, maxChars) + "\n…(已截断，完整内容见剪贴板/日志)";
+        }
+
+        MessageBox.Show(body, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+    }
 
     private void ScanCurrentDrawing()
     {
@@ -700,7 +751,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show("扫描当前图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowScanFailure("扫描当前图失败", ex);
         }
     }
 
@@ -747,7 +798,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show("框选扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowScanFailure("框选扫描失败", ex);
         }
         finally
         {
