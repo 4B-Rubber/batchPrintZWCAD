@@ -439,52 +439,30 @@ public sealed class TemporarySequenceOverlay : IDisposable
 
     private void AddBoldLabel(Transaction tr, BlockTableRecord owner, ObjectId layerId, ObjectId textStyleId, Color color, Point3d center, string text, double height, double rotation, List<ObjectId> labelIds)
     {
-        var stroke = Math.Max(height * 0.035, 2d);
-        // 文字始终只创建一套描边实体；换行高亮时只改颜色，避免为加粗效果重建文字。
-        var cosR = Math.Cos(rotation);
-        var sinR = Math.Sin(rotation);
-        var offsets = new (double X, double Y)[]
+        // 单个宋体数字即可；不再叠多层描边，避免实体过多、清理残留时看起来像一堆重合数字。
+        var label = new DBText();
+        label.SetDatabaseDefaults(_document.Database);
+        label.TextString = text;
+        label.Color = color;
+        label.LayerId = layerId;
+        label.TextStyleId = textStyleId;
+        label.Height = height;
+        label.Rotation = rotation;
+        label.HorizontalMode = TextHorizontalMode.TextCenter;
+        label.VerticalMode = TextVerticalMode.TextVerticalMid;
+        label.Position = center;
+        label.AlignmentPoint = center;
+        var id = AddEntity(tr, owner, label);
+        labelIds.Add(id);
+        try
         {
-            (0d, 0d),
-            (-stroke, 0d),
-            (stroke, 0d),
-            (0d, -stroke),
-            (0d, stroke),
-            (-stroke * 0.7, -stroke * 0.7),
-            (-stroke * 0.7, stroke * 0.7),
-            (stroke * 0.7, -stroke * 0.7),
-            (stroke * 0.7, stroke * 0.7)
-        };
-
-        foreach (var (dx, dy) in offsets)
+            label.AdjustAlignment(_document.Database);
+        }
+        catch
         {
-            // 描边偏移按 UCS 角度旋转，和红框方向一致
-            var rx = dx * cosR - dy * sinR;
-            var ry = dx * sinR + dy * cosR;
-            var point = new Point3d(center.X + rx, center.Y + ry, center.Z);
-            var label = new DBText();
-            label.SetDatabaseDefaults(_document.Database);
-            label.TextString = text;
-            label.Color = color;
-            label.LayerId = layerId;
-            label.TextStyleId = textStyleId;
-            label.Height = height;
-            label.Rotation = rotation;
-            label.HorizontalMode = TextHorizontalMode.TextCenter;
-            label.VerticalMode = TextVerticalMode.TextVerticalMid;
-            label.Position = point;
-            label.AlignmentPoint = point;
-            var id = AddEntity(tr, owner, label);
-            labelIds.Add(id);
-            try
-            {
-                label.AdjustAlignment(_document.Database);
-            }
-            catch
-            {
-            }
         }
     }
+
 
     private void Regen()
     {

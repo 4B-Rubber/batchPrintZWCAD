@@ -2180,6 +2180,8 @@ public sealed partial class BatchPlotForm : Window
             BatchPlotHostProgress.End();
 
             RefreshStatus();
+            // 打印结束（成功/取消/异常）都清掉临时红框和序号，避免中望偶发残留。
+            ClearSequenceOverlay();
         }
     }
 

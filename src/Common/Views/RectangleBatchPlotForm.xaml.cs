@@ -1485,6 +1485,11 @@ public sealed partial class RectangleBatchPlotForm : Window
                 try { Directory.Delete(temporaryDirectory, true); } catch { }
             }
             UpdateVisuals();
+            // UpdateVisuals 可能异步排队重画红框；先作废调度再清除，避免打印完又画回来。
+            _overlayScheduleGeneration++;
+            _overlay.Clear();
+            _overlayPainted = false;
+            _lastOverlayRebuildKey = null;
         }
     }
 
