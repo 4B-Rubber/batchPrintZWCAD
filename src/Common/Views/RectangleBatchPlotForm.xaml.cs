@@ -685,11 +685,12 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            ShowScanFailure("重新识别矩形框失败", ex);
+            MessageBox.Show("重新识别矩形框失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
     private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
+
 
     /// <summary>
     /// 扫描失败时把完整异常给用户看（弹窗 + 剪贴板 + 日志），避免只剩 eNotApplicable 无法反馈。
@@ -699,10 +700,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         var detail = ex.ToString();
         try
         {
-            _document.Editor.WriteMessage("
-" + action + "
-" + detail + "
-");
+            _document.Editor.WriteMessage("\n" + action + "\n" + detail + "\n");
         }
         catch
         {
@@ -730,23 +728,15 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
         }
 
-        var body = action + "
-
-" + detail;
+        var body = action + "\n\n" + detail;
         body += string.IsNullOrWhiteSpace(logPath)
-            ? "
-
-完整内容已尝试复制到剪贴板。"
-            : "
-
-完整内容已复制到剪贴板，并写入日志:
-" + logPath;
+            ? "\n\n完整内容已尝试复制到剪贴板。"
+            : "\n\n完整内容已复制到剪贴板，并写入日志:\n" + logPath;
 
         const int maxChars = 6000;
         if (body.Length > maxChars)
         {
-            body = body.Substring(0, maxChars) + "
-…(已截断，完整内容见剪贴板/日志)";
+            body = body.Substring(0, maxChars) + "\n…(已截断，完整内容见剪贴板/日志)";
         }
 
         MessageBox.Show(body, Title, MessageBoxButton.OK, MessageBoxImage.Error);
@@ -786,9 +776,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
             MessageBox.Show(
                 catalogErrors.Count > 0
-                    ? "未能枚举到可扫描的模型/布局。
-" + string.Join("
-", catalogErrors)
+                    ? "未能枚举到可扫描的模型/布局。\n" + string.Join("\n", catalogErrors)
                     : "所选 DWG 中没有可扫描的模型或布局。",
                 Title,
                 MessageBoxButton.OK,
@@ -882,9 +870,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             ClearSequenceOverlay();
             MessageBox.Show(
                 errors.Count > 0
-                    ? "扫描完成但未识别到矩形框。
-" + string.Join("
-", errors)
+                    ? "扫描完成但未识别到矩形框。\n" + string.Join("\n", errors)
                     : "勾选空间内没有识别到符合常见纸张比例的矩形框。",
                 Title,
                 MessageBoxButton.OK,
@@ -906,9 +892,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         if (errors.Count > 0)
         {
             MessageBox.Show(
-                "部分 DWG 扫描失败:
-" + string.Join("
-", errors),
+                "部分 DWG 扫描失败:\n" + string.Join("\n", errors),
                 Title,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -945,7 +929,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         _overlayPainted = false;
         _lastOverlayRebuildKey = null;
     }
-    }
 
     private void ScanCurrentDrawing()
     {
@@ -975,7 +958,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            ShowScanFailure("扫描当前图失败", ex);
+            MessageBox.Show("扫描当前图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -1022,7 +1005,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            ShowScanFailure("框选扫描失败", ex);
+            MessageBox.Show("框选扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1760,11 +1743,6 @@ public sealed partial class RectangleBatchPlotForm : Window
                 try { Directory.Delete(temporaryDirectory, true); } catch { }
             }
             UpdateVisuals();
-            // UpdateVisuals 可能异步排队重画红框；先作废调度再清除，避免打印完又画回来。
-            _overlayScheduleGeneration++;
-            _overlay.Clear();
-            _overlayPainted = false;
-            _lastOverlayRebuildKey = null;
         }
     }
 
