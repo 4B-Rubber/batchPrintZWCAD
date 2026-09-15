@@ -188,6 +188,7 @@ public sealed partial class RectangleBatchPlotForm : Window
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
 
     private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
+    private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
     private void ReloadFrames_Click(object sender, RoutedEventArgs e) => ReloadFrames();
 
@@ -535,7 +536,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var stem = GetDocumentFileStem();
+        var fallbackStem = GetDocumentFileStem();
         var digits = Math.Max(1, Math.Min(10, _settings.FileNameSequenceDigits));
         var printIndex = 0;
         for (var i = 0; i < _rows.Count; i++)
@@ -546,6 +547,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             }
 
             printIndex++;
+            var stem = GetJobFileStem(_rows[i].Job, fallbackStem);
             _rows[i].Job.DrawingNumber = printIndex.ToString($"D{digits}");
             _rows[i].FileName = $"{stem}{printIndex.ToString($"D{digits}")}{SelectedOutputExtension}";
             _rows[i].RefreshFromJob();
@@ -597,7 +599,8 @@ public sealed partial class RectangleBatchPlotForm : Window
             else
             {
                 // 该框未识别到图号/图名：与整批无属性时一致，用 DWG 名 + 勾选序号。
-                baseName = $"{stem}{printIndex.ToString($"D{legacyDigits}")}";
+                var jobStem = GetJobFileStem(row.Job, stem);
+                baseName = $"{jobStem}{printIndex.ToString($"D{legacyDigits}")}";
             }
 
             var fullPath = FileNameSanitizer.MakeUnique(
@@ -625,6 +628,21 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
 
         return stem ?? "";
+    }
+
+    /// <summary>多文件批打时优先用任务 SourceFile 作为文件名主干。</summary>
+    private static string GetJobFileStem(PlotJob job, string fallbackStem)
+    {
+        if (!string.IsNullOrWhiteSpace(job.SourceFile))
+        {
+            var stem = Path.GetFileNameWithoutExtension(job.SourceFile);
+            if (!string.IsNullOrWhiteSpace(stem))
+            {
+                return stem;
+            }
+        }
+
+        return fallbackStem ?? "";
     }
 
     /// <summary>该行是否识别到非空图号或图名属性。</summary>
@@ -681,7 +699,10 @@ public sealed partial class RectangleBatchPlotForm : Window
         var detail = ex.ToString();
         try
         {
-            _document.Editor.WriteMessage("\n" + action + "\n" + detail + "\n");
+            _document.Editor.WriteMessage("
+" + action + "
+" + detail + "
+");
         }
         catch
         {
@@ -709,18 +730,221 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
         }
 
-        var body = action + "\n\n" + detail;
+        var body = action + "
+
+" + detail;
         body += string.IsNullOrWhiteSpace(logPath)
-            ? "\n\n完整内容已尝试复制到剪贴板。"
-            : "\n\n完整内容已复制到剪贴板，并写入日志:\n" + logPath;
+            ? "
+
+完整内容已尝试复制到剪贴板。"
+            : "
+
+完整内容已复制到剪贴板，并写入日志:
+" + logPath;
 
         const int maxChars = 6000;
         if (body.Length > maxChars)
         {
-            body = body.Substring(0, maxChars) + "\n…(已截断，完整内容见剪贴板/日志)";
+            body = body.Substring(0, maxChars) + "
+…(已截断，完整内容见剪贴板/日志)";
         }
 
         MessageBox.Show(body, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    private void AddDwgFiles()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "DWG 文件 (*.dwg)|*.dwg",
+            Multiselect = true,
+            Title = "选择要批量打印的 DWG"
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var files = dialog.FileNames
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (files.Count == 0)
+        {
+            return;
+        }
+
+        var catalogErrors = new List<string>();
+        var spaces = DwgSpaceCatalog.ListSpaces(files, catalogErrors);
+        if (catalogErrors.Count > 0)
+        {
+            // 通用型无统一日志窗，失败详情放提示框。
+        }
+
+        if (spaces.Count == 0)
+        {
+            MessageBox.Show(
+                catalogErrors.Count > 0
+                    ? "未能枚举到可扫描的模型/布局。
+" + string.Join("
+", catalogErrors)
+                    : "所选 DWG 中没有可扫描的模型或布局。",
+                Title,
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var picker = new ScanSpacePickerDialog(spaces);
+        if (CadDialog.ShowModal(picker, this) != true)
+        {
+            return;
+        }
+
+        var selected = picker.SelectedSpaces;
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        // 确认后先清空清单，再只扫勾选空间。
+        ReplaceBindingListContents(_rows, Array.Empty<Row>());
+        ReplaceBindingListContents(_displayRows, Array.Empty<Row>());
+        ClearSequenceOverlay();
+        _lastScanScope = null;
+        _scanWindow = null;
+        _hasAttributeIdentity = false;
+        UpdateAttributeIdentityColumns();
+
+        var allResults = new List<RectangleFrameScanner.Result>();
+        var errors = new List<string>();
+        string currentPath;
+        try
+        {
+            currentPath = string.IsNullOrWhiteSpace(_document.Database.Filename)
+                ? ""
+                : Path.GetFullPath(_document.Database.Filename);
+        }
+        catch
+        {
+            currentPath = _document.Database.Filename ?? "";
+        }
+
+        foreach (var fileGroup in selected.GroupBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var file = fileGroup.Key;
+            var allowed = new HashSet<string>(
+                fileGroup.Select(s => s.LayoutName),
+                StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var isCurrent = !string.IsNullOrWhiteSpace(currentPath)
+                    && string.Equals(Path.GetFullPath(file), currentPath, StringComparison.OrdinalIgnoreCase);
+                List<RectangleFrameScanner.Result> results;
+                if (isCurrent)
+                {
+                    results = RectangleFrameScanner.ScanScope(
+                        _document,
+                        TitleBlockScanScope.AllSpaces,
+                        _settings.PaperMatchToleranceMm,
+                        _settings.RecognizeFourLineRectangleFrames,
+                        progress: null,
+                        cancellationToken: default,
+                        allowedLayoutNames: allowed);
+                    TransformResultsToDcs(results);
+                }
+                else
+                {
+                    using var db = new Database(false, true);
+                    db.ReadDwgFile(file, FileOpenMode.OpenForReadAndAllShare, true, "");
+                    db.CloseInput(true);
+                    results = RectangleFrameScanner.ScanDatabase(
+                        db,
+                        file,
+                        TitleBlockScanScope.AllSpaces,
+                        allowed,
+                        _settings.PaperMatchToleranceMm,
+                        _settings.RecognizeFourLineRectangleFrames);
+                }
+
+                allResults.AddRange(results);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{file}: {ex.Message}");
+            }
+        }
+
+        if (allResults.Count == 0)
+        {
+            LoadRows(allResults);
+            ClearSequenceOverlay();
+            MessageBox.Show(
+                errors.Count > 0
+                    ? "扫描完成但未识别到矩形框。
+" + string.Join("
+", errors)
+                    : "勾选空间内没有识别到符合常见纸张比例的矩形框。",
+                Title,
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        LoadRows(allResults);
+        // 多文件（含外图）不向当前文档画红框。
+        if (allResults.Any(r => !IsCurrentDocumentSource(r.Job.SourceFile)))
+        {
+            ClearSequenceOverlay();
+        }
+        else
+        {
+            ScheduleOverlayRefresh();
+        }
+
+        if (errors.Count > 0)
+        {
+            MessageBox.Show(
+                "部分 DWG 扫描失败:
+" + string.Join("
+", errors),
+                Title,
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private bool IsCurrentDocumentSource(string sourceFile)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFile))
+        {
+            return false;
+        }
+
+        try
+        {
+            var current = _document.Database.Filename;
+            if (string.IsNullOrWhiteSpace(current))
+            {
+                return string.Equals(sourceFile, _document.Name, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return string.Equals(Path.GetFullPath(sourceFile), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(sourceFile, _document.Name, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void ClearSequenceOverlay()
+    {
+        _overlayScheduleGeneration++;
+        _overlay.Clear(repaint: false);
+        _overlayPainted = false;
+        _lastOverlayRebuildKey = null;
+    }
     }
 
     private void ScanCurrentDrawing()
