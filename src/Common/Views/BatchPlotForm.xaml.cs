@@ -349,45 +349,81 @@ public sealed partial class BatchPlotForm : Window
             return;
         }
 
-        var filesToScan = new List<string>();
-        foreach (var file in dialog.FileNames)
+        var files = dialog.FileNames
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (files.Count == 0)
         {
-            var fullPath = Path.GetFullPath(file);
-            if (!_selectedDwgFiles.Any(x => string.Equals(x, fullPath, StringComparison.OrdinalIgnoreCase)))
-            {
-                _selectedDwgFiles.Add(fullPath);
-                filesToScan.Add(fullPath);
-            }
+            return;
+        }
+
+        var catalogErrors = new List<string>();
+        var spaces = DwgSpaceCatalog.ListSpaces(files, catalogErrors);
+        if (catalogErrors.Count > 0)
+        {
+            AppendLog("WARN", "枚举布局时部分文件失败: " + string.Join("；", catalogErrors));
+        }
+
+        if (spaces.Count == 0)
+        {
+            System.Windows.MessageBox.Show(
+                catalogErrors.Count > 0
+                    ? "未能枚举到可扫描的模型/布局。\n" + string.Join("\n", catalogErrors)
+                    : "所选 DWG 中没有可扫描的模型或布局。",
+                "批量打印",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var picker = new ScanSpacePickerDialog(spaces);
+        if (CadDialog.ShowModal(picker, this) != true)
+        {
+            return;
+        }
+
+        var selected = picker.SelectedSpaces;
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        // 确认后先清空清单，再只扫勾选空间。
+        _jobs.Clear();
+        _selectedDwgFiles.Clear();
+        ClearSequenceOverlay();
+
+        foreach (var file in selected.Select(s => s.FilePath).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            _selectedDwgFiles.Add(file);
         }
 
         var library = TitleBlockLibraryStore.Load();
         var added = new List<PlotJob>();
         var errors = new List<string>();
 
-        foreach (var file in filesToScan)
+        foreach (var fileGroup in selected.GroupBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase))
         {
+            var file = fileGroup.Key;
+            var allowed = new HashSet<string>(
+                fileGroup.Select(s => s.LayoutName),
+                StringComparer.OrdinalIgnoreCase);
             try
             {
-                var scanned = ScanExternalFile(file, library);
+                var scanned = ScanExternalFile(file, library, allowed);
                 added.AddRange(scanned);
-                AppendLog("INFO", $"扫描 {file}，识别 {scanned.Count} 张。");
+                AppendLog("INFO", $"扫描 {file}（{allowed.Count} 个空间），识别 {scanned.Count} 张。");
             }
             catch (Exception ex)
             {
-                var message = $"{file}: {ex.Message}";
-                errors.Add(message);
+                var message = $"{file}: {ex}";
+                errors.Add($"{file}: {ex.Message}");
                 AppendLog("ERROR", "扫描失败，" + message);
             }
         }
 
-        if (added.Count > 0)
-        {
-            SortAndRefreshOutputPaths(_jobs.Concat(added).ToList());
-        }
-        else
-        {
-            SortAndRefreshOutputPaths();
-        }
+        SortAndRefreshOutputPaths(added);
         if (_jobs.Count > 0 && _jobs.All(IsCurrentDocumentJob))
         {
             ScheduleSequenceOverlayForCurrentJobs();
@@ -399,19 +435,40 @@ public sealed partial class BatchPlotForm : Window
 
         if (errors.Count > 0)
         {
-            System.Windows.MessageBox.Show("部分 DWG 扫描失败:\n" + string.Join("\n", errors), "批量打印", MessageBoxButton.OK, MessageBoxImage.Warning);
+            System.Windows.MessageBox.Show(
+                "部分 DWG 扫描失败:\n" + string.Join("\n", errors),
+                "批量打印",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
     }
 
-    private List<PlotJob> ScanExternalFile(string file, TitleBlockLibrary library)
+    private List<PlotJob> ScanExternalFile(
+        string file,
+        TitleBlockLibrary library,
+        ISet<string>? allowedLayoutNames = null)
     {
-        if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(_currentDocument.Database.Filename), StringComparison.OrdinalIgnoreCase))
+        string currentPath;
+        try
+        {
+            currentPath = string.IsNullOrWhiteSpace(_currentDocument.Database.Filename)
+                ? ""
+                : Path.GetFullPath(_currentDocument.Database.Filename);
+        }
+        catch
+        {
+            currentPath = _currentDocument.Database.Filename ?? "";
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentPath)
+            && string.Equals(Path.GetFullPath(file), currentPath, StringComparison.OrdinalIgnoreCase))
         {
             return TitleBlockScanner.Scan(
                 _currentDocument,
                 library,
                 TitleBlockScanScope.AllSpaces,
-                _settings.PaperMatchToleranceMm);
+                _settings.PaperMatchToleranceMm,
+                allowedLayoutNames);
         }
 
         using var db = new Database(false, true);
@@ -424,7 +481,9 @@ public sealed partial class BatchPlotForm : Window
             null,
             TitleBlockScanScope.AllSpaces,
             null,
-            _settings.PaperMatchToleranceMm);
+            _settings.PaperMatchToleranceMm,
+            null,
+            allowedLayoutNames);
     }
 
     /// <summary>

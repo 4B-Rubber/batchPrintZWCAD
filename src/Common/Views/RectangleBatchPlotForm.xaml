@@ -56,6 +56,10 @@
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanSelectedWindow_Click"
                         ToolTip="回到 CAD 框选区域，只识别框内矩形框。" />
+                <Button x:Name="_addFilesBtn" Content="多文件批打" MinWidth="108"
+                        Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
+                        Click="AddDwgFiles_Click"
+                        ToolTip="多选 DWG，勾选模型/布局后扫描并加入清单。" />
                 <Rectangle Width="1" Height="14" Fill="#CDD2D8"
                            Margin="4,0,12,0" VerticalAlignment="Center" />
                 <Button x:Name="_refreshBtn" Content="重新识别" MinWidth="88"

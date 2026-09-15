@@ -33,7 +33,12 @@ public static class TitleBlockScanner
             CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode));
     }
 
-    public static List<PlotJob> Scan(Document doc, TitleBlockLibrary library, TitleBlockScanScope scope, double? paperMatchToleranceMm = null)
+    public static List<PlotJob> Scan(
+        Document doc,
+        TitleBlockLibrary library,
+        TitleBlockScanScope scope,
+        double? paperMatchToleranceMm = null,
+        ISet<string>? allowedLayoutNames = null)
     {
         var sourceName = string.IsNullOrWhiteSpace(doc.Database.Filename)
             ? doc.Name
@@ -46,7 +51,8 @@ public static class TitleBlockScanner
             scope,
             GetCurrentSpaceName(doc.Database),
             paperMatchToleranceMm,
-            CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode));
+            CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode),
+            allowedLayoutNames);
     }
 
     public static List<PlotJob> Scan(Document doc, TitleBlockLibrary library, Extents3d? scanWindow, double? paperMatchToleranceMm = null)
@@ -109,7 +115,8 @@ public static class TitleBlockScanner
         TitleBlockScanScope scope,
         string? currentSpaceName = null,
         double? paperMatchToleranceMm = null,
-        CadSelectionWindow? modelCoordinateContext = null)
+        CadSelectionWindow? modelCoordinateContext = null,
+        ISet<string>? allowedLayoutNames = null)
     {
         var storedSettings = AppSettingsStore.Load();
         var effectivePaperToleranceMm = paperMatchToleranceMm ?? storedSettings.PaperMatchToleranceMm;
@@ -129,7 +136,8 @@ public static class TitleBlockScanner
                 scope,
                 currentSpaceName,
                 effectivePaperToleranceMm,
-                modelCoordinateContext);
+                modelCoordinateContext,
+                allowedLayoutNames);
         }
         finally
         {
@@ -145,7 +153,8 @@ public static class TitleBlockScanner
         TitleBlockScanScope scope,
         string? currentSpaceName,
         double effectivePaperToleranceMm,
-        CadSelectionWindow? modelCoordinateContext)
+        CadSelectionWindow? modelCoordinateContext,
+        ISet<string>? allowedLayoutNames)
     {
         var jobs = new List<PlotJob>();
         var warnings = new List<string>();
@@ -167,7 +176,7 @@ public static class TitleBlockScanner
 
             var layout = (Layout)tr.GetObject(owner.LayoutId, OpenMode.ForRead);
             var spaceName = layout.LayoutName;
-            if (!ShouldScanLayout(layout, owner, scope, currentSpaceName))
+            if (!ShouldScanLayout(layout, owner, scope, currentSpaceName, allowedLayoutNames))
             {
                 continue;
             }
@@ -533,8 +542,22 @@ public static class TitleBlockScanner
             && string.Equals(a.SpaceName, b.SpaceName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool ShouldScanLayout(Layout layout, BlockTableRecord owner, TitleBlockScanScope scope, string? currentSpaceName)
+    private static bool ShouldScanLayout(
+        Layout layout,
+        BlockTableRecord owner,
+        TitleBlockScanScope scope,
+        string? currentSpaceName,
+        ISet<string>? allowedLayoutNames = null)
     {
+        if (allowedLayoutNames != null && allowedLayoutNames.Count > 0)
+        {
+            var name = layout.LayoutName ?? "";
+            if (!allowedLayoutNames.Contains(name))
+            {
+                return false;
+            }
+        }
+
         switch (scope)
         {
             case TitleBlockScanScope.PaperLayouts:
