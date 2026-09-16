@@ -1144,7 +1144,7 @@ public sealed partial class BatchPlotForm : Window
         _renumberCurrentJobs = null;
         _renumberOriginalNumbers = null;
 
-        if (dialog.DialogResult != true)
+        if (!dialog.Accepted)
         {
             // 恢复原始图号，并把 CAD 红框恢复为打印顺序数字。
             foreach (var kv in originalNumbers)

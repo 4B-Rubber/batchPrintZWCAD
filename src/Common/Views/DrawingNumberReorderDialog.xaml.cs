@@ -17,6 +17,9 @@ public sealed partial class DrawingNumberReorderDialog : System.Windows.Window
     /// <summary>true = 从左到右、从上到下；false = 从上到下、从左到右。</summary>
     public bool HorizontalFirst => _wpfControl?.HorizontalFirst ?? false;
 
+    /// <summary>非模态下代替 DialogResult：确定为 true，取消或点 X 为 false。</summary>
+    public bool Accepted { get; private set; }
+
     /// <summary>用户点击"预览顺序"时触发。</summary>
     public event Action? PreviewRequested;
 
@@ -27,8 +30,9 @@ public sealed partial class DrawingNumberReorderDialog : System.Windows.Window
             InitializeComponent();
             // 控件构造需要参数，因此在代码中创建并填充窗口内容。
             _wpfControl = new DrawingNumberReorderControl(jobCount, detectedPrefix, horizontalFirst);
-            _wpfControl.OkRequested += () => { DialogResult = true; Close(); };
-            _wpfControl.CancelRequested += () => { DialogResult = false; Close(); };
+            // 本窗为 Show() 非模态，不能设 DialogResult（会抛 InvalidOperationException / e0434352h）。
+            _wpfControl.OkRequested += () => { Accepted = true; Close(); };
+            _wpfControl.CancelRequested += () => { Accepted = false; Close(); };
             _wpfControl.PreviewRequested += () => PreviewRequested?.Invoke();
             Content = _wpfControl;
         }
