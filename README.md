@@ -1,6 +1,6 @@
 # LA批量打印
 
-一个面向 ZWCAD 和 AutoCAD 的 .NET 批量打印插件。插件可以学习图框块，识别图名、图号、图幅和比例，支持跨文件批量扫描，并输出 PDF、PNG、JPG、DWF 或按图框拆分 DWG。当前版本：v1.15.7.3。
+一个面向 ZWCAD 和 AutoCAD 的 .NET 批量打印插件。插件可以学习图框块，识别图名、图号、图幅和比例，支持跨文件批量扫描，并输出 PDF、PNG、JPG、DWF 或按图框拆分 DWG。当前版本：v1.15.7.4。
 
 ## 使用教程
 
@@ -25,7 +25,7 @@ AutoCAD 2015 ~ 2024 全系列共用同一个 `AcadBatchPlot.dll`，使用 .NET F
 - 固定输出纸张：图框加入信息库时可设置输出图幅，以后该图框始终按这个纸张尺寸打印。
 - 图幅识别：支持 A0、A1、A2、A3 以及加长图。
 - 比例识别：图框块按录入纸张短边自动识别任意比例，包括 1:143、10:1、2.1:1；加长图按同一比例继续识别实际长边。
-- 批量打印：支持扫描当前图、框选扫描、多文件批打后跨文件批量打印。
+- 批量打印：支持扫描当前图、框选扫描、对象扫描、多文件批打后跨文件批量打印。
 - 多格式输出：支持 PDF、PNG、JPG、DWF 和 DWG；选择什么格式，预览和正式输出就使用什么格式。
 - 自有栅格设备：PNG/JPG 使用插件自有 `LA_png` / `LA_jpg`，不回退到 CAD 自带设备。
 - 通用型批量打印：框选范围后识别普通矩形及布局块内矩形，支持纸张/比例候选、连续编号、红框标识和空间排序；比例仍以“比例设置”中的内置及自定义列表为准。
@@ -197,7 +197,7 @@ AutoCAD 2025 ~ 2027 如果菜单栏未显示，可以执行 `ZBP_SHOW_PANEL` 打
 | --- | --- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构与主流程（命令、扫描、打印、拆图内核） |
 | [docs/用户使用说明.md](docs/用户使用说明.md) | 安装、菜单与常见问题 |
-| [docs/RELEASE_NOTES_v1.15.7.3.md](docs/RELEASE_NOTES_v1.15.7.3.md) | 当前版本发布说明 |
+| [docs/RELEASE_NOTES_v1.15.7.4.md](docs/RELEASE_NOTES_v1.15.7.4.md) | 当前版本发布说明 |
 | [docs/tutorial.html](docs/tutorial.html) | 图文教程 |
 
 ## 开发
@@ -248,10 +248,10 @@ dotnet build src\BatchPlotter\BatchPlotter.csproj -c Release
 生成本地发布目录与三组 ZIP：
 
 ```powershell
-.\scripts\package-release.ps1 -Version 1.15.7.3
+.\scripts\package-release.ps1 -Version 1.15.7.4
 ```
 
-输出位于 `release\v1.15.7.3\`，包含 ZWCAD、AutoCAD 2015–2024、AutoCAD 2025–2027 三组完整安装目录和对应压缩包。
+输出位于 `release\v1.15.7.4\`，包含 ZWCAD、AutoCAD 2015–2024、AutoCAD 2025–2027 三组完整安装目录和对应压缩包。
 
 ## 说明
 
