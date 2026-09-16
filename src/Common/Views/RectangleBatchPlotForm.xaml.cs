@@ -185,7 +185,10 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     // ── 事件处理（XAML 绑定） ──
 
+    private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
+
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
+
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
     private void ReloadFrames_Click(object sender, RoutedEventArgs e) => ReloadFrames();
@@ -687,6 +690,8 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
     }
 
+    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
+
     /// <summary>
     /// 扫描失败时把完整异常给用户看（弹窗 + 剪贴板 + 日志），避免只剩 eNotApplicable 无法反馈。
     /// </summary>
@@ -923,6 +928,41 @@ public sealed partial class RectangleBatchPlotForm : Window
         _overlay.Clear(repaint: false);
         _overlayPainted = false;
         _lastOverlayRebuildKey = null;
+    }
+
+    /// <summary>
+    /// 扫描当前图：弹出范围对话框后按所选空间识别矩形图框。
+    /// </summary>
+    private void ScanCurrentDrawing()
+    {
+        var scope = PromptScanScope();
+        if (scope == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var results = ScanScopeWithProgress(scope.Value);
+            if (results.Count == 0)
+            {
+                MessageBox.Show("扫描范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            TransformResultsToDcs(results);
+            _lastScanScope = scope;
+            _scanSelectionIds = null;
+            LoadRows(results);
+        }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("扫描当前图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     /// <summary>

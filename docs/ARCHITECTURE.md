@@ -208,7 +208,7 @@ TitleBlockScanner.Scan(Document, TitleBlockLibrary)
 **实现**：[`RectangleFrameScanner.cs`](src/Common/Services/Scanning/RectangleFrameScanner.cs)
 
 > 注意：与图框库模式不同，矩形框批打采用"先弹窗后扫描"的 UX 设计。
-> 用户打开面板后，点击"框选扫描"（先按类型过滤选对象；未拾取时可右键选范围）触发扫描，
+> 用户打开面板后，点击"扫描当前图"（选择范围）或"框选扫描"（点选/框选对象，未拾取时可右键选范围）触发扫描，
 > 而非打开命令后立即扫描。
 
 ### 5.1 整体流程

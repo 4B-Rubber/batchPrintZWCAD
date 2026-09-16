@@ -54,6 +54,10 @@
         <StackPanel DockPanel.Dock="Top" Margin="10,4,10,4">
             <!-- 动作行（原 FlowLayoutPanel WrapContents=true → WrapPanel） -->
             <WrapPanel>
+                <Button x:Name="_scanButton" Content="扫描当前图" MinWidth="108"
+                        Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
+                        Click="ScanCurrentDrawing_Click"
+                        ToolTip="扫描当前打开图纸中的全部匹配图框。" />
                 <Button x:Name="_scanObjectsButton" Content="框选扫描" MinWidth="92"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanSelectedObjects_Click"
