@@ -185,8 +185,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     // ── 事件处理（XAML 绑定） ──
 
-    private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
-
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
@@ -689,9 +687,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
     }
 
-    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
-
-
     /// <summary>
     /// 扫描失败时把完整异常给用户看（弹窗 + 剪贴板 + 日志），避免只剩 eNotApplicable 无法反馈。
     /// </summary>
@@ -930,42 +925,9 @@ public sealed partial class RectangleBatchPlotForm : Window
         _lastOverlayRebuildKey = null;
     }
 
-    private void ScanCurrentDrawing()
-    {
-        var scope = PromptScanScope();
-        if (scope == null)
-        {
-            return;
-        }
-
-        try
-        {
-            var results = ScanScopeWithProgress(scope.Value);
-            if (results.Count == 0)
-            {
-                MessageBox.Show("扫描范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            TransformResultsToDcs(results);
-            _lastScanScope = scope;
-            _scanSelectionIds = null;
-            LoadRows(results);
-        }
-        catch (OperationCanceledException)
-        {
-            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("扫描当前图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
-
     /// <summary>
-    /// 对象扫描：在 CAD 中选择矩形图框候选对象（块/多段线，以及开启四线识别时的直线）。
-    /// 未拾取时右键弹出扫描范围菜单，走与「扫描当前图」相同的范围扫描。
-    /// 取消选择时保持现有清单不变。
+    /// 框选扫描：先按类型过滤选择对象，再识别选中矩形图框。
+    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
     {

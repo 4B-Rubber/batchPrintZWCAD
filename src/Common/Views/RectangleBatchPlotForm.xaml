@@ -48,10 +48,6 @@
         <StackPanel DockPanel.Dock="Top" Margin="10,4,10,2">
             <!-- 动作行 -->
             <StackPanel Orientation="Horizontal">
-                <Button x:Name="_scanCurrentBtn" Content="扫描当前图" MinWidth="108"
-                        Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
-                        Click="ScanCurrentDrawing_Click"
-                        ToolTip="扫描当前打开图纸中的全部符合纸张比例的矩形框。" />
                 <Button x:Name="_scanObjectsBtn" Content="框选扫描" MinWidth="92"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanSelectedObjects_Click"

@@ -184,43 +184,9 @@ public sealed partial class BatchPlotForm : Window
 
     // ── 扫描 ──
 
-    private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
-
-    private void ScanCurrentDrawing()
-    {
-        var library = TitleBlockLibraryStore.Load();
-        if (library.Blocks.Count == 0)
-        {
-            System.Windows.MessageBox.Show("图框库为空。请先从“批量打印”菜单点击“新增图框”。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
-            ClearSequenceOverlay();
-            RefreshStatus();
-            return;
-        }
-
-        var scope = PromptScanScope();
-        if (scope == null)
-        {
-            return;
-        }
-
-        _selectedDwgFiles.Clear();
-        var scannedJobs = TitleBlockScanner.Scan(
-            _currentDocument,
-            library,
-            scope.Value,
-            _settings.PaperMatchToleranceMm);
-
-        // 扫描结果坐标是 WCS，转为 DCS 后打印（和通用型批量打印同理）
-        TransformScannedJobsToDcs(scannedJobs);
-        SortAndRefreshOutputPaths(scannedJobs);
-        ScheduleSequenceOverlayForCurrentJobs();
-        AppendLog("INFO", $"扫描当前图完成，识别 {_jobs.Count} 张。");
-    }
-
     /// <summary>
-    /// 对象扫描：在 CAD 中选择图框块（选择阶段过滤 INSERT），只识别选中对象。
-    /// 未拾取时右键弹出扫描范围菜单，走与「扫描当前图」相同的范围扫描。
-    /// 取消选择时保持现有清单不变。
+    /// 框选扫描：先按类型过滤选择对象，再识别选中图框。
+    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
     {
@@ -285,6 +251,29 @@ public sealed partial class BatchPlotForm : Window
         {
             CadWindowFocus.RestoreDialog(this);
         }
+    }
+
+    /// <summary>图框库变更后，按全部空间重新扫描当前图（不打断用户做对象选择）。</summary>
+    private void RescanAllSpacesAfterLibraryChange()
+    {
+        var library = TitleBlockLibraryStore.Load();
+        if (library.Blocks.Count == 0)
+        {
+            ClearSequenceOverlay();
+            RefreshStatus();
+            return;
+        }
+
+        _selectedDwgFiles.Clear();
+        var scannedJobs = TitleBlockScanner.Scan(
+            _currentDocument,
+            library,
+            TitleBlockScanScope.AllSpaces,
+            _settings.PaperMatchToleranceMm);
+        TransformScannedJobsToDcs(scannedJobs);
+        SortAndRefreshOutputPaths(scannedJobs);
+        ScheduleSequenceOverlayForCurrentJobs();
+        AppendLog("INFO", $"图框库更新后重扫完成，识别 {_jobs.Count} 张。");
     }
 
     /// <summary>扫描得到的 Job 坐标是 WCS，转换为 DCS 后打印（和通用型批量打印同理）。</summary>
@@ -1628,7 +1617,7 @@ public sealed partial class BatchPlotForm : Window
         CadDialog.ShowModal(form);
         if (form.LibraryChanged)
         {
-            ScanCurrentDrawing();
+            RescanAllSpacesAfterLibraryChange();
         }
     }
 
@@ -2555,8 +2544,6 @@ public sealed partial class BatchPlotForm : Window
     }
 
     // ── UI 事件处理器 ──
-
-    private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
 
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
 
