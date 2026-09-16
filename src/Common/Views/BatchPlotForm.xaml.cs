@@ -270,6 +270,56 @@ public sealed partial class BatchPlotForm : Window
         }
     }
 
+    /// <summary>
+    /// 对象扫描：在 CAD 中选择图框块（选择阶段过滤 INSERT），只识别选中对象。
+    /// 取消选择时保持现有清单不变。
+    /// </summary>
+    private void ScanSelectedObjects()
+    {
+        var library = TitleBlockLibraryStore.Load();
+        if (library.Blocks.Count == 0)
+        {
+            System.Windows.MessageBox.Show("图框库为空，请先新增图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
+            ClearSequenceOverlay();
+            return;
+        }
+
+        CadWindowFocus.HideForCadInput(this);
+        try
+        {
+            var selectedIds = ObjectSelectionPrompt.Prompt(
+                _currentDocument.Editor,
+                "\n选择要批量打印的图框块对象: ",
+                ObjectSelectionPrompt.TitleBlockFilter());
+            if (selectedIds == null)
+            {
+                return;
+            }
+
+            var scannedJobs = TitleBlockScanner.Scan(
+                _currentDocument,
+                library,
+                selectedIds,
+                _settings.PaperMatchToleranceMm);
+
+            if (scannedJobs.Count == 0)
+            {
+                System.Windows.MessageBox.Show("选中对象中未识别到任何图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _selectedDwgFiles.Clear();
+            TransformScannedJobsToDcs(scannedJobs);
+            SortAndRefreshOutputPaths(scannedJobs);
+            ScheduleSequenceOverlayForCurrentJobs();
+            AppendLog("INFO", $"对象扫描当前图完成，识别 {_jobs.Count} 张。");
+        }
+        finally
+        {
+            CadWindowFocus.RestoreDialog(this);
+        }
+    }
+
     /// <summary>扫描得到的 Job 坐标是 WCS，转换为 DCS 后打印（和通用型批量打印同理）。</summary>
     private void TransformScannedJobsToDcs(List<PlotJob> jobs)
     {
@@ -2542,6 +2592,8 @@ public sealed partial class BatchPlotForm : Window
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
 
     private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
+
+    private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
 
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 

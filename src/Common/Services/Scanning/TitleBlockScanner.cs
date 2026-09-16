@@ -97,6 +97,28 @@ public static class TitleBlockScanner
             .ToList();
     }
 
+    /// <summary>
+    /// 只扫描给定的块参照 ObjectId（选择阶段通常已过滤为 INSERT）。
+    /// 空或 null 返回空列表；无法打开、非块参照或非布局内对象会被忽略。
+    /// </summary>
+    public static List<PlotJob> Scan(
+        Document doc,
+        TitleBlockLibrary library,
+        IEnumerable<ObjectId>? selectedIds,
+        double? paperMatchToleranceMm = null)
+    {
+        var sourceName = string.IsNullOrWhiteSpace(doc.Database.Filename)
+            ? doc.Name
+            : doc.Database.Filename;
+        return ScanSelected(
+            doc.Database,
+            library,
+            sourceName,
+            selectedIds,
+            paperMatchToleranceMm,
+            CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode));
+    }
+
     public static List<PlotJob> Scan(Database db, TitleBlockLibrary library, string sourceName)
     {
         return Scan(db, library, sourceName, null);
@@ -198,312 +220,25 @@ public static class TitleBlockScanner
                     continue;
                 }
 
-                string blockName;
-                try
-                {
-                    blockName = CadTextExtractor.GetBlockName(blockRef, tr);
-                }
-                catch (Exception ex)
-                {
-                    warnings.Add($"布局={spaceName} 句柄={blockRef.Handle} 块名读取失败: {ex.Message}");
-                    continue;
-                }
-
-                // 图框库记录可能是“块名+可见性名”，图纸上块参照名通常只是外层块名；
-                // 先用库名分段过滤无关块，再读取完整身份名，避免对全图块做嵌套递归。
-                if (!libraryIndex.IsPotentialTitleBlock(blockName))
-                {
-                    continue;
-                }
-
-                string identityName;
-                try
-                {
-                    identityName = CadTextExtractor.GetLibraryIdentityName(blockRef, tr);
-                }
-                catch (Exception ex)
-                {
-                    warnings.Add($"布局={spaceName} 句柄={blockRef.Handle} 身份名读取失败: {ex.Message}");
-                    continue;
-                }
-
-                var definition = libraryIndex.TryGet(identityName);
-
-                // 可见性身份未入库时，再按旧规则找：当前可见内层块，或仅外层块名。
-                Matrix3d effectiveBlockTransform = blockRef.BlockTransform;
-                string effectiveBlockName = identityName;
-                ObjectId frameDefinitionId = blockRef.BlockTableRecord;
-                // 嵌套匹配时需记录从内层块定义到外层块定义空间的累积变换，用于后续 region 坐标对齐。
-                Matrix3d nestedToOuter = Matrix3d.Identity;
-                bool isNestedMatch = false;
-                if (definition == null && libraryIndex.ShouldAttemptNestedMatch(blockName))
-                {
-                    definition = ResolveNestedLibraryMatch(
-                        tr,
-                        blockRef,
-                        blockName,
-                        libraryIndex,
-                        out var nestedTransform,
-                        out var nestedDefinitionId);
-                    if (definition != null)
-                    {
-                        effectiveBlockTransform = nestedTransform * blockRef.BlockTransform;
-                        effectiveBlockName = definition.BlockName;
-                        nestedToOuter = nestedTransform;
-                        frameDefinitionId = nestedDefinitionId;
-                        isNestedMatch = true;
-                    }
-                }
-
-                if (definition == null && !string.Equals(identityName, blockName, StringComparison.OrdinalIgnoreCase))
-                {
-                    definition = libraryIndex.TryGet(blockName);
-                    if (definition != null)
-                    {
-                        effectiveBlockName = definition.BlockName;
-                    }
-                }
-                else if (definition != null)
-                {
-                    effectiveBlockName = definition.BlockName;
-                }
-
-                if (definition == null)
-                {
-                    continue;
-                }
-
-                Extents3d extents;
-                LocalRectangle titleRegion;
-                LocalRectangle numberRegion;
-                LocalRectangle dateRegion = new();
-                LocalRectangle revisionRegion = new();
-                LocalRectangle phaseRegion = new();
-                LocalRectangle info1Region = new();
-                LocalRectangle info2Region = new();
-                RegionCoordinateMode coordinateMode;
-                LocalRectangle referenceFrame;
-                try
-                {
-                    coordinateMode = GetCoordinateMode(definition);
-                    referenceFrame = ResolveReferenceFrame(
-                        tr,
-                        definition,
-                        blockRef,
-                        frameDefinitionId,
-                        effectiveBlockTransform,
-                        coordinateMode);
-                    extents = ResolveWorldExtents(definition, blockRef, effectiveBlockTransform, coordinateMode, referenceFrame);
-                    titleRegion = ResolveLocalRegion(definition.TitleRegion, effectiveBlockTransform, coordinateMode, referenceFrame);
-                    numberRegion = ResolveLocalRegion(definition.DrawingNumberRegion, effectiveBlockTransform, coordinateMode, referenceFrame);
-                    dateRegion = definition.DateRegion.HasArea()
-                        ? ResolveLocalRegion(definition.DateRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
-                        : new LocalRectangle();
-                    revisionRegion = definition.RevisionRegion.HasArea()
-                        ? ResolveLocalRegion(definition.RevisionRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
-                        : new LocalRectangle();
-                    phaseRegion = definition.PhaseRegion.HasArea()
-                        ? ResolveLocalRegion(definition.PhaseRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
-                        : new LocalRectangle();
-                    info1Region = definition.Info1Region.HasArea()
-                        ? ResolveLocalRegion(definition.Info1Region, effectiveBlockTransform, coordinateMode, referenceFrame)
-                        : new LocalRectangle();
-                    info2Region = definition.Info2Region.HasArea()
-                        ? ResolveLocalRegion(definition.Info2Region, effectiveBlockTransform, coordinateMode, referenceFrame)
-                        : new LocalRectangle();
-
-                    // 嵌套匹配时 ResolveLocalRegion 返回的 region 处于内层块定义空间，
-                    // 而 ExtractRegionText 从外层 blockRef 定义空间起算，三种坐标模式都需统一坐标系。
-                    if (isNestedMatch)
-                    {
-                        titleRegion = TransformLocalRegion(titleRegion, nestedToOuter);
-                        numberRegion = TransformLocalRegion(numberRegion, nestedToOuter);
-                        if (dateRegion.HasArea())
-                            dateRegion = TransformLocalRegion(dateRegion, nestedToOuter);
-                        if (revisionRegion.HasArea())
-                            revisionRegion = TransformLocalRegion(revisionRegion, nestedToOuter);
-                        if (phaseRegion.HasArea())
-                            phaseRegion = TransformLocalRegion(phaseRegion, nestedToOuter);
-                        if (info1Region.HasArea())
-                            info1Region = TransformLocalRegion(info1Region, nestedToOuter);
-                        if (info2Region.HasArea())
-                            info2Region = TransformLocalRegion(info2Region, nestedToOuter);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    warnings.Add($"布局={spaceName} 块={blockName} 句柄={blockRef.Handle} 坐标解析失败: {ex.Message}");
-                    continue;
-                }
-
-                if (scanWindow.HasValue && !Intersects(extents, scanWindow.Value))
-                {
-                    continue;
-                }
-
-                // 识别与显示不能用 extents 包围盒宽高——块参照带旋转角时包围盒比实际边长大（45° 约放大 √2 倍），
-                // 会误判比例和图幅。与矩形框扫描同理，识别和显示改用 wcsCorners 相邻角点的实际边长。
-
-                // 计算打印区域的 4 个实际 WCS 角点（含 BlockTransform 的缩放和旋转）
-                // 不取包围盒，和矩形框扫描的 CornerPoints 同理：4 角 × WCS→DCS 只取一次包围盒
-                var wcsCorners = ComputeWcsCorners(coordinateMode, referenceFrame, effectiveBlockTransform);
-                var coordinateBounds = layout.ModelType && modelCoordinateContext != null
-                    ? modelCoordinateContext.TransformWorldPointsToBounds(wcsCorners)
-                    : null;
-                var width = coordinateBounds != null && !modelCoordinateContext!.IsWorldCoordinateSystem
-                    ? coordinateBounds.MaxX - coordinateBounds.MinX
-                    : CornerDistance(wcsCorners, 0, 1);
-                var height = coordinateBounds != null && !modelCoordinateContext!.IsWorldCoordinateSystem
-                    ? coordinateBounds.MaxY - coordinateBounds.MinY
-                    : CornerDistance(wcsCorners, 1, 2);
-
-                var detectionOptions = PaperSizeDetector.CreateTitleBlockBatchOptions(effectivePaperToleranceMm, !layout.ModelType, storedSettings.LongPaperSnapToleranceMm, storedSettings.CustomScales);
-                if (IsGenericDynamicPaperName(definition.PaperName))
-                {
-                    // A2+ 中的 A2 是录入时已经确认的基础图幅，扫描只允许重新计算长边。
-                    // 比例由“录入打印范围 CAD 尺寸 / 录入纸张毫米尺寸”反推，不能再套模型空间默认 1:100。
-                    detectionOptions.PreferredPaperBaseName = GetGenericDynamicPaperBaseName(definition.PaperName);
-                    var recordedScale = InferRecordedPaperScale(definition);
-                    if (recordedScale > 0)
-                    {
-                        detectionOptions.PreferredScaleValue = recordedScale;
-                    }
-                }
-
-                // 固定图幅可用入库尺寸消除图框零头误差；A1+/A2+ 是可自由拉伸模板，
-                // 入库宽高只代表录入时那一个实例，绝不能参与扫描候选排序。
-                if (!IsGenericDynamicPaperName(definition.PaperName)
-                    && definition.PaperWidthMm > 0
-                    && definition.PaperHeightMm > 0)
-                {
-                    detectionOptions.PreferredPaperWidthMm = definition.PaperWidthMm;
-                    detectionOptions.PreferredPaperHeightMm = definition.PaperHeightMm;
-                }
-                // 图框块的比例由当前外框短边与图框库录入纸张短边直接反推，不再受比例列表限制。
-                // 比例列表仍只服务矩形框批打及旧库缺失纸张尺寸时的兼容回退。
-                var hasArbitraryScalePaper = PaperSizeDetector.TryDetectTitleBlockAtArbitraryScale(
-                    width,
-                    height,
-                    definition.PaperName,
-                    definition.PaperWidthMm,
-                    definition.PaperHeightMm,
+                var job = TryCreateJobFromBlockReference(
+                    tr,
+                    blockRef,
+                    layout,
+                    owner,
+                    libraryIndex,
+                    ownerTextCache,
+                    scanWindow,
+                    modelCoordinateContext,
                     effectivePaperToleranceMm,
-                    storedSettings.LongPaperSnapToleranceMm,
-                    out var arbitraryScalePaper);
-                var detectedPaper = hasArbitraryScalePaper
-                    ? arbitraryScalePaper
-                    : PaperSizeDetector.Detect(width, height, detectionOptions);
-                var paper = ApplyFixedPaper(definition, detectedPaper, width, height);
-                string title;
-                string number;
-                string date = "";
-                string revision = "";
-                string phase = "";
-                string info1 = "";
-                string info2 = "";
-                try
+                    storedSettings,
+                    sourceName,
+                    matchIndex,
+                    warnings);
+                if (job != null)
                 {
-                    var blockTextCache = CadTextExtractor.BuildBlockReferenceTextCache(tr, blockRef);
-                    title = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, titleRegion, ownerTextCache, blockTextCache);
-                    number = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, numberRegion, ownerTextCache, blockTextCache);
-                    if (dateRegion.HasArea())
-                        date = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, dateRegion, ownerTextCache, blockTextCache);
-                    if (revisionRegion.HasArea())
-                        revision = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, revisionRegion, ownerTextCache, blockTextCache);
-                    if (phaseRegion.HasArea())
-                        phase = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, phaseRegion, ownerTextCache, blockTextCache);
-                    if (info1Region.HasArea())
-                        info1 = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, info1Region, ownerTextCache, blockTextCache);
-                    if (info2Region.HasArea())
-                        info2 = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, info2Region, ownerTextCache, blockTextCache);
+                    jobs.Add(job);
+                    matchIndex++;
                 }
-                catch (Exception ex)
-                {
-                    warnings.Add($"布局={spaceName} 块={blockName} 句柄={blockRef.Handle} 文字提取失败: {ex.Message}");
-                    title = "";
-                    number = "";
-                }
-
-                // 嵌套匹配时输出诊断信息，方便排查深度嵌套场景下的字段提取问题。
-                if (isNestedMatch)
-                {
-                    if (dateRegion.HasArea() && string.IsNullOrWhiteSpace(date))
-                        warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 日期字段区域有定义但未提取到文字");
-                    if (revisionRegion.HasArea() && string.IsNullOrWhiteSpace(revision))
-                        warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 版次字段区域有定义但未提取到文字");
-                    if (phaseRegion.HasArea() && string.IsNullOrWhiteSpace(phase))
-                        warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 设计阶段字段区域有定义但未提取到文字");
-                    if (info1Region.HasArea() && string.IsNullOrWhiteSpace(info1))
-                        warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 信息1字段区域有定义但未提取到文字");
-                    if (info2Region.HasArea() && string.IsNullOrWhiteSpace(info2))
-                        warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 信息2字段区域有定义但未提取到文字");
-                }
-
-                if (string.IsNullOrWhiteSpace(title))
-                {
-                    title = "未识别图名";
-                }
-
-                if (string.IsNullOrWhiteSpace(number))
-                {
-                    number = "未识别图号";
-                }
-
-                var boundaryNote = definition.HasPrintRegion ? "打印边界: 图框库框选边界" : "打印边界: 块外包框";
-                if (coordinateMode == RegionCoordinateMode.World)
-                {
-                    boundaryNote += "；图框库坐标模式: 图纸坐标";
-                }
-                else
-                {
-                    boundaryNote += "；图框库坐标模式: 块内坐标";
-                }
-
-                // 与图框录入共用同一套最大闭合矩形/线包围盒规则，保证打印范围一致。
-                var job = new PlotJob
-                {
-                    SourceFile = sourceName,
-                    SpaceName = spaceName,
-                    IsPaperSpace = !layout.ModelType,
-                    LayoutTabOrder = layout.TabOrder,
-                    BlockName = effectiveBlockName,
-                    BlockHandle = blockRef.Handle.ToString(),
-                    MatchIndex = matchIndex++,
-                    DrawingNumber = number,
-                    Title = title,
-                    Date = date,
-                    Revision = revision,
-                    Phase = phase,
-                    Info1 = info1,
-                    Info2 = info2,
-                    CadDrawingNumber = number,
-                    CadTitle = title,
-                    CadDate = date,
-                    CadRevision = revision,
-                    CadPhase = phase,
-                    CadInfo1 = info1,
-                    CadInfo2 = info2,
-                    PaperName = paper.PaperName,
-                    ScaleText = paper.ScaleText,
-                    SizeText = $"{Math.Abs(width):0.##} x {Math.Abs(height):0.##}",
-                    PaperSizeText = $"{paper.PaperWidthMm:0.##} x {paper.PaperHeightMm:0.##} mm",
-                    DetectionNote = $"{boundaryNote}; {paper.Note}",
-                    PaperWidthMm = paper.PaperWidthMm,
-                    PaperHeightMm = paper.PaperHeightMm,
-                    DetectedRequiresCustomPaperRegistration = paper.RequiresCustomPaper,
-                    RequiresCustomPaperRegistration = paper.RequiresCustomPaper,
-                    MinX = extents.MinPoint.X,
-                    MinY = extents.MinPoint.Y,
-                    MaxX = extents.MaxPoint.X,
-                    MaxY = extents.MaxPoint.Y,
-                    CornerPoints = wcsCorners
-                };
-                if (layout.ModelType && modelCoordinateContext != null && coordinateBounds != null)
-                {
-                    modelCoordinateContext.ApplyToJob(job, coordinateBounds);
-                }
-
-                jobs.Add(job);
             }
         }
 
@@ -513,6 +248,517 @@ public static class TitleBlockScanner
             .OrderBy(x => x.DrawingNumber, NaturalStringComparer.Instance)
             .ThenBy(x => Path.GetFileName(x.SourceFile), StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// 将单个块参照匹配图框库并生成打印任务；无法匹配时返回 null。
+    /// </summary>
+    private static PlotJob? TryCreateJobFromBlockReference(
+        Transaction tr,
+        BlockReference blockRef,
+        Layout layout,
+        BlockTableRecord owner,
+        TitleBlockLibraryIndex libraryIndex,
+        CadTextExtractor.OwnerTextCache? ownerTextCache,
+        Extents3d? scanWindow,
+        CadSelectionWindow? modelCoordinateContext,
+        double effectivePaperToleranceMm,
+        AppSettings storedSettings,
+        string sourceName,
+        int matchIndex,
+        List<string> warnings)
+    {
+        var spaceName = layout.LayoutName;
+        string blockName;
+        try
+        {
+            blockName = CadTextExtractor.GetBlockName(blockRef, tr);
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"布局={spaceName} 句柄={blockRef.Handle} 块名读取失败: {ex.Message}");
+            return null;
+        }
+
+        // 图框库记录可能是“块名+可见性名”，图纸上块参照名通常只是外层块名；
+        // 先用库名分段过滤无关块，再读取完整身份名，避免对全图块做嵌套递归。
+        if (!libraryIndex.IsPotentialTitleBlock(blockName))
+        {
+            return null;
+        }
+
+        string identityName;
+        try
+        {
+            identityName = CadTextExtractor.GetLibraryIdentityName(blockRef, tr);
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"布局={spaceName} 句柄={blockRef.Handle} 身份名读取失败: {ex.Message}");
+            return null;
+        }
+
+        var definition = libraryIndex.TryGet(identityName);
+
+        // 可见性身份未入库时，再按旧规则找：当前可见内层块，或仅外层块名。
+        Matrix3d effectiveBlockTransform = blockRef.BlockTransform;
+        string effectiveBlockName = identityName;
+        ObjectId frameDefinitionId = blockRef.BlockTableRecord;
+        // 嵌套匹配时需记录从内层块定义到外层块定义空间的累积变换，用于后续 region 坐标对齐。
+        Matrix3d nestedToOuter = Matrix3d.Identity;
+        bool isNestedMatch = false;
+        if (definition == null && libraryIndex.ShouldAttemptNestedMatch(blockName))
+        {
+            definition = ResolveNestedLibraryMatch(
+                tr,
+                blockRef,
+                blockName,
+                libraryIndex,
+                out var nestedTransform,
+                out var nestedDefinitionId);
+            if (definition != null)
+            {
+                effectiveBlockTransform = nestedTransform * blockRef.BlockTransform;
+                effectiveBlockName = definition.BlockName;
+                nestedToOuter = nestedTransform;
+                frameDefinitionId = nestedDefinitionId;
+                isNestedMatch = true;
+            }
+        }
+
+        if (definition == null && !string.Equals(identityName, blockName, StringComparison.OrdinalIgnoreCase))
+        {
+            definition = libraryIndex.TryGet(blockName);
+            if (definition != null)
+            {
+                effectiveBlockName = definition.BlockName;
+            }
+        }
+        else if (definition != null)
+        {
+            effectiveBlockName = definition.BlockName;
+        }
+
+        if (definition == null)
+        {
+            return null;
+        }
+
+        Extents3d extents;
+        LocalRectangle titleRegion;
+        LocalRectangle numberRegion;
+        LocalRectangle dateRegion = new();
+        LocalRectangle revisionRegion = new();
+        LocalRectangle phaseRegion = new();
+        LocalRectangle info1Region = new();
+        LocalRectangle info2Region = new();
+        RegionCoordinateMode coordinateMode;
+        LocalRectangle referenceFrame;
+        try
+        {
+            coordinateMode = GetCoordinateMode(definition);
+            referenceFrame = ResolveReferenceFrame(
+                tr,
+                definition,
+                blockRef,
+                frameDefinitionId,
+                effectiveBlockTransform,
+                coordinateMode);
+            extents = ResolveWorldExtents(definition, blockRef, effectiveBlockTransform, coordinateMode, referenceFrame);
+            titleRegion = ResolveLocalRegion(definition.TitleRegion, effectiveBlockTransform, coordinateMode, referenceFrame);
+            numberRegion = ResolveLocalRegion(definition.DrawingNumberRegion, effectiveBlockTransform, coordinateMode, referenceFrame);
+            dateRegion = definition.DateRegion.HasArea()
+                ? ResolveLocalRegion(definition.DateRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
+                : new LocalRectangle();
+            revisionRegion = definition.RevisionRegion.HasArea()
+                ? ResolveLocalRegion(definition.RevisionRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
+                : new LocalRectangle();
+            phaseRegion = definition.PhaseRegion.HasArea()
+                ? ResolveLocalRegion(definition.PhaseRegion, effectiveBlockTransform, coordinateMode, referenceFrame)
+                : new LocalRectangle();
+            info1Region = definition.Info1Region.HasArea()
+                ? ResolveLocalRegion(definition.Info1Region, effectiveBlockTransform, coordinateMode, referenceFrame)
+                : new LocalRectangle();
+            info2Region = definition.Info2Region.HasArea()
+                ? ResolveLocalRegion(definition.Info2Region, effectiveBlockTransform, coordinateMode, referenceFrame)
+                : new LocalRectangle();
+
+            // 嵌套匹配时 ResolveLocalRegion 返回的 region 处于内层块定义空间，
+            // 而 ExtractRegionText 从外层 blockRef 定义空间起算，三种坐标模式都需统一坐标系。
+            if (isNestedMatch)
+            {
+                titleRegion = TransformLocalRegion(titleRegion, nestedToOuter);
+                numberRegion = TransformLocalRegion(numberRegion, nestedToOuter);
+                if (dateRegion.HasArea())
+                    dateRegion = TransformLocalRegion(dateRegion, nestedToOuter);
+                if (revisionRegion.HasArea())
+                    revisionRegion = TransformLocalRegion(revisionRegion, nestedToOuter);
+                if (phaseRegion.HasArea())
+                    phaseRegion = TransformLocalRegion(phaseRegion, nestedToOuter);
+                if (info1Region.HasArea())
+                    info1Region = TransformLocalRegion(info1Region, nestedToOuter);
+                if (info2Region.HasArea())
+                    info2Region = TransformLocalRegion(info2Region, nestedToOuter);
+            }
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"布局={spaceName} 块={blockName} 句柄={blockRef.Handle} 坐标解析失败: {ex.Message}");
+            return null;
+        }
+
+        if (scanWindow.HasValue && !Intersects(extents, scanWindow.Value))
+        {
+            return null;
+        }
+
+        // 识别与显示不能用 extents 包围盒宽高——块参照带旋转角时包围盒比实际边长大（45° 约放大 √2 倍），
+        // 会误判比例和图幅。与矩形框扫描同理，识别和显示改用 wcsCorners 相邻角点的实际边长。
+
+        // 计算打印区域的 4 个实际 WCS 角点（含 BlockTransform 的缩放和旋转）
+        // 不取包围盒，和矩形框扫描的 CornerPoints 同理：4 角 × WCS→DCS 只取一次包围盒
+        var wcsCorners = ComputeWcsCorners(coordinateMode, referenceFrame, effectiveBlockTransform);
+        var coordinateBounds = layout.ModelType && modelCoordinateContext != null
+            ? modelCoordinateContext.TransformWorldPointsToBounds(wcsCorners)
+            : null;
+        var width = coordinateBounds != null && !modelCoordinateContext!.IsWorldCoordinateSystem
+            ? coordinateBounds.MaxX - coordinateBounds.MinX
+            : CornerDistance(wcsCorners, 0, 1);
+        var height = coordinateBounds != null && !modelCoordinateContext!.IsWorldCoordinateSystem
+            ? coordinateBounds.MaxY - coordinateBounds.MinY
+            : CornerDistance(wcsCorners, 1, 2);
+
+        var detectionOptions = PaperSizeDetector.CreateTitleBlockBatchOptions(effectivePaperToleranceMm, !layout.ModelType, storedSettings.LongPaperSnapToleranceMm, storedSettings.CustomScales);
+        if (IsGenericDynamicPaperName(definition.PaperName))
+        {
+            // A2+ 中的 A2 是录入时已经确认的基础图幅，扫描只允许重新计算长边。
+            // 比例由“录入打印范围 CAD 尺寸 / 录入纸张毫米尺寸”反推，不能再套模型空间默认 1:100。
+            detectionOptions.PreferredPaperBaseName = GetGenericDynamicPaperBaseName(definition.PaperName);
+            var recordedScale = InferRecordedPaperScale(definition);
+            if (recordedScale > 0)
+            {
+                detectionOptions.PreferredScaleValue = recordedScale;
+            }
+        }
+
+        // 固定图幅可用入库尺寸消除图框零头误差；A1+/A2+ 是可自由拉伸模板，
+        // 入库宽高只代表录入时那一个实例，绝不能参与扫描候选排序。
+        if (!IsGenericDynamicPaperName(definition.PaperName)
+            && definition.PaperWidthMm > 0
+            && definition.PaperHeightMm > 0)
+        {
+            detectionOptions.PreferredPaperWidthMm = definition.PaperWidthMm;
+            detectionOptions.PreferredPaperHeightMm = definition.PaperHeightMm;
+        }
+        // 图框块的比例由当前外框短边与图框库录入纸张短边直接反推，不再受比例列表限制。
+        // 比例列表仍只服务矩形框批打及旧库缺失纸张尺寸时的兼容回退。
+        var hasArbitraryScalePaper = PaperSizeDetector.TryDetectTitleBlockAtArbitraryScale(
+            width,
+            height,
+            definition.PaperName,
+            definition.PaperWidthMm,
+            definition.PaperHeightMm,
+            effectivePaperToleranceMm,
+            storedSettings.LongPaperSnapToleranceMm,
+            out var arbitraryScalePaper);
+        var detectedPaper = hasArbitraryScalePaper
+            ? arbitraryScalePaper
+            : PaperSizeDetector.Detect(width, height, detectionOptions);
+        var paper = ApplyFixedPaper(definition, detectedPaper, width, height);
+        string title;
+        string number;
+        string date = "";
+        string revision = "";
+        string phase = "";
+        string info1 = "";
+        string info2 = "";
+        try
+        {
+            var blockTextCache = CadTextExtractor.BuildBlockReferenceTextCache(tr, blockRef);
+            title = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, titleRegion, ownerTextCache, blockTextCache);
+            number = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, numberRegion, ownerTextCache, blockTextCache);
+            if (dateRegion.HasArea())
+                date = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, dateRegion, ownerTextCache, blockTextCache);
+            if (revisionRegion.HasArea())
+                revision = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, revisionRegion, ownerTextCache, blockTextCache);
+            if (phaseRegion.HasArea())
+                phase = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, phaseRegion, ownerTextCache, blockTextCache);
+            if (info1Region.HasArea())
+                info1 = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, info1Region, ownerTextCache, blockTextCache);
+            if (info2Region.HasArea())
+                info2 = CadTextExtractor.ExtractRegionText(tr, blockRef, owner, info2Region, ownerTextCache, blockTextCache);
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"布局={spaceName} 块={blockName} 句柄={blockRef.Handle} 文字提取失败: {ex.Message}");
+            title = "";
+            number = "";
+        }
+
+        // 嵌套匹配时输出诊断信息，方便排查深度嵌套场景下的字段提取问题。
+        if (isNestedMatch)
+        {
+            if (dateRegion.HasArea() && string.IsNullOrWhiteSpace(date))
+                warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 日期字段区域有定义但未提取到文字");
+            if (revisionRegion.HasArea() && string.IsNullOrWhiteSpace(revision))
+                warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 版次字段区域有定义但未提取到文字");
+            if (phaseRegion.HasArea() && string.IsNullOrWhiteSpace(phase))
+                warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 设计阶段字段区域有定义但未提取到文字");
+            if (info1Region.HasArea() && string.IsNullOrWhiteSpace(info1))
+                warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 信息1字段区域有定义但未提取到文字");
+            if (info2Region.HasArea() && string.IsNullOrWhiteSpace(info2))
+                warnings.Add($"布局={spaceName} 块={effectiveBlockName}(嵌套) 信息2字段区域有定义但未提取到文字");
+        }
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = "未识别图名";
+        }
+
+        if (string.IsNullOrWhiteSpace(number))
+        {
+            number = "未识别图号";
+        }
+
+        var boundaryNote = definition.HasPrintRegion ? "打印边界: 图框库框选边界" : "打印边界: 块外包框";
+        if (coordinateMode == RegionCoordinateMode.World)
+        {
+            boundaryNote += "；图框库坐标模式: 图纸坐标";
+        }
+        else
+        {
+            boundaryNote += "；图框库坐标模式: 块内坐标";
+        }
+
+        // 与图框录入共用同一套最大闭合矩形/线包围盒规则，保证打印范围一致。
+        var job = new PlotJob
+        {
+            SourceFile = sourceName,
+            SpaceName = spaceName,
+            IsPaperSpace = !layout.ModelType,
+            LayoutTabOrder = layout.TabOrder,
+            BlockName = effectiveBlockName,
+            BlockHandle = blockRef.Handle.ToString(),
+            MatchIndex = matchIndex,
+            DrawingNumber = number,
+            Title = title,
+            Date = date,
+            Revision = revision,
+            Phase = phase,
+            Info1 = info1,
+            Info2 = info2,
+            CadDrawingNumber = number,
+            CadTitle = title,
+            CadDate = date,
+            CadRevision = revision,
+            CadPhase = phase,
+            CadInfo1 = info1,
+            CadInfo2 = info2,
+            PaperName = paper.PaperName,
+            ScaleText = paper.ScaleText,
+            SizeText = $"{Math.Abs(width):0.##} x {Math.Abs(height):0.##}",
+            PaperSizeText = $"{paper.PaperWidthMm:0.##} x {paper.PaperHeightMm:0.##} mm",
+            DetectionNote = $"{boundaryNote}; {paper.Note}",
+            PaperWidthMm = paper.PaperWidthMm,
+            PaperHeightMm = paper.PaperHeightMm,
+            DetectedRequiresCustomPaperRegistration = paper.RequiresCustomPaper,
+            RequiresCustomPaperRegistration = paper.RequiresCustomPaper,
+            MinX = extents.MinPoint.X,
+            MinY = extents.MinPoint.Y,
+            MaxX = extents.MaxPoint.X,
+            MaxY = extents.MaxPoint.Y,
+            CornerPoints = wcsCorners
+        };
+        if (layout.ModelType && modelCoordinateContext != null && coordinateBounds != null)
+        {
+            modelCoordinateContext.ApplyToJob(job, coordinateBounds);
+        }
+
+
+        return job;
+    }
+
+    /// <summary>
+    /// 仅处理给定 ObjectId 集合中的块参照，复用与全图扫描相同的匹配与任务构建逻辑。
+    /// </summary>
+    private static List<PlotJob> ScanSelected(
+        Database db,
+        TitleBlockLibrary library,
+        string sourceName,
+        IEnumerable<ObjectId>? selectedIds,
+        double? paperMatchToleranceMm,
+        CadSelectionWindow? modelCoordinateContext)
+    {
+        if (selectedIds == null)
+        {
+            return new List<PlotJob>();
+        }
+
+        var idList = new List<ObjectId>();
+        foreach (var id in selectedIds)
+        {
+            if (!id.IsNull)
+            {
+                idList.Add(id);
+            }
+        }
+
+        if (idList.Count == 0)
+        {
+            return new List<PlotJob>();
+        }
+
+        var storedSettings = AppSettingsStore.Load();
+        var effectivePaperToleranceMm = paperMatchToleranceMm ?? storedSettings.PaperMatchToleranceMm;
+        if (string.IsNullOrWhiteSpace(sourceName))
+        {
+            sourceName = db.Filename;
+        }
+
+        TitleBlockScanCaches.Begin();
+        try
+        {
+            return ScanSelectedCore(
+                db,
+                library,
+                sourceName,
+                idList,
+                effectivePaperToleranceMm,
+                modelCoordinateContext,
+                storedSettings);
+        }
+        finally
+        {
+            TitleBlockScanCaches.End();
+        }
+    }
+
+    private static List<PlotJob> ScanSelectedCore(
+        Database db,
+        TitleBlockLibrary library,
+        string sourceName,
+        IReadOnlyList<ObjectId> selectedIds,
+        double effectivePaperToleranceMm,
+        CadSelectionWindow? modelCoordinateContext,
+        AppSettings storedSettings)
+    {
+        var jobs = new List<PlotJob>();
+        var warnings = new List<string>();
+        var libraryIndex = new TitleBlockLibraryIndex(library);
+        var groups = new Dictionary<ObjectId, List<BlockReference>>();
+        var owners = new Dictionary<ObjectId, (BlockTableRecord Owner, Layout Layout)>();
+
+        using var tr = db.TransactionManager.StartTransaction();
+        foreach (var id in selectedIds)
+        {
+            var blockRef = TryOpenBlockReference(tr, id);
+            if (blockRef == null)
+            {
+                continue;
+            }
+
+            var ownerId = blockRef.OwnerId;
+            if (ownerId.IsNull)
+            {
+                continue;
+            }
+
+            if (!owners.TryGetValue(ownerId, out var ownerInfo))
+            {
+                BlockTableRecord? owner;
+                Layout? layout;
+                try
+                {
+                    owner = tr.GetObject(ownerId, OpenMode.ForRead, false) as BlockTableRecord;
+                    if (owner == null || !owner.IsLayout || owner.LayoutId.IsNull)
+                    {
+                        continue;
+                    }
+
+                    layout = tr.GetObject(owner.LayoutId, OpenMode.ForRead, false) as Layout;
+                    if (layout == null)
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+
+                ownerInfo = (owner, layout);
+                owners[ownerId] = ownerInfo;
+                groups[ownerId] = new List<BlockReference>();
+            }
+
+            groups[ownerId].Add(blockRef);
+        }
+
+        var matchIndex = 0;
+        foreach (var pair in groups)
+        {
+            var (owner, layout) = owners[pair.Key];
+            var spaceName = layout.LayoutName;
+            CadTextExtractor.OwnerTextCache? ownerTextCache = null;
+            try
+            {
+                ownerTextCache = CadTextExtractor.BuildOwnerTextCache(tr, owner, libraryIndex.NameParts);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"布局={spaceName} 文字缓存建立失败，将继续逐个扫描图框: {ex.Message}");
+            }
+
+            foreach (var blockRef in pair.Value)
+            {
+                var job = TryCreateJobFromBlockReference(
+                    tr,
+                    blockRef,
+                    layout,
+                    owner,
+                    libraryIndex,
+                    ownerTextCache,
+                    scanWindow: null,
+                    modelCoordinateContext,
+                    effectivePaperToleranceMm,
+                    storedSettings,
+                    sourceName,
+                    matchIndex,
+                    warnings);
+                if (job != null)
+                {
+                    jobs.Add(job);
+                    matchIndex++;
+                }
+            }
+        }
+
+        tr.Commit();
+        LogScanWarnings(sourceName, warnings);
+        return DeduplicateOverlappingJobs(jobs)
+            .OrderBy(x => x.DrawingNumber, NaturalStringComparer.Instance)
+            .ThenBy(x => Path.GetFileName(x.SourceFile), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 安全打开块参照；空、已删除或非块参照的 id 返回 null。
+    /// </summary>
+    private static BlockReference? TryOpenBlockReference(Transaction tr, ObjectId id)
+    {
+        try
+        {
+            if (id.IsNull)
+            {
+                return null;
+            }
+
+            return tr.GetObject(id, OpenMode.ForRead, false) as BlockReference;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static List<PlotJob> DeduplicateOverlappingJobs(List<PlotJob> jobs)

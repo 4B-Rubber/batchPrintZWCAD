@@ -22,8 +22,9 @@ namespace ZwcadBatchPlot;
 /// 筛选出符合标准纸张比例的作为待打印图框。
 ///
 /// 公共入口：
-///   ScanWindow  — 扫描当前空间（框选范围）
-///   ScanScope   — 按范围扫描多个布局（全部/布局/当前/模型）
+///   ScanWindow    — 扫描当前空间（框选范围）
+///   ScanScope     — 按范围扫描多个布局（全部/布局/当前/模型）
+///   ScanSelection — 只扫描用户选中的 ObjectId（类型过滤在选择阶段完成）
 ///
 /// 内部流水线：CollectRectanglesFromSpace 收集 →
 /// FilterAndPackageRectangles 过滤打包（窗口裁剪 → 纸张比例 →
@@ -504,6 +505,169 @@ public static class RectangleFrameScanner
     }
 
     /// <summary>
+    /// 只扫描给定 ObjectId 集合中的实体（块参照、多段线，以及开启四线识别时的直线）。
+    /// 空或 null 返回空列表；无法打开的 id 会被忽略。结果形状与 <see cref="ScanWindow"/> / <see cref="ScanScope"/> 相同。
+    /// </summary>
+    public static List<Result> ScanSelection(
+        Document document,
+        IEnumerable<ObjectId>? selectedIds,
+        double? paperMatchToleranceMm = null,
+        bool? recognizeFourLineRectangles = null,
+        IProgress<RectangleScanProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var previousProgress = _activeProgress;
+        var previousCancel = _activeCancel;
+        _activeProgress = progress;
+        _activeCancel = cancellationToken;
+        try
+        {
+            if (selectedIds == null)
+            {
+                return new List<Result>();
+            }
+
+            var idList = new List<ObjectId>();
+            foreach (var id in selectedIds)
+            {
+                if (!id.IsNull)
+                {
+                    idList.Add(id);
+                }
+            }
+
+            if (idList.Count == 0)
+            {
+                return new List<Result>();
+            }
+
+            LayerScannableCache.Clear();
+            BlockDefinitionCache.Clear();
+            var storedSettings = AppSettingsStore.Load();
+            var effectivePaperToleranceMm = paperMatchToleranceMm ?? storedSettings.PaperMatchToleranceMm;
+            var recognizeFourLines =
+                recognizeFourLineRectangles ?? storedSettings.RecognizeFourLineRectangleFrames;
+            var sourceFile = string.IsNullOrWhiteSpace(document.Database.Filename)
+                ? document.Name
+                : document.Database.Filename;
+
+            ReportScan("正在读取选中对象…");
+
+            var spaceData = new List<(List<LocalRectangle> Rectangles, ObjectId OwnerId, string LayoutName, bool IsPaperSpace, int TabOrder)>();
+            using (var tr = document.Database.TransactionManager.StartTransaction())
+            {
+                var groups = new Dictionary<ObjectId, List<ObjectId>>();
+                var owners = new Dictionary<ObjectId, (BlockTableRecord Owner, Layout Layout)>();
+                foreach (var id in idList)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Entity? entity;
+                    try
+                    {
+                        entity = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entity == null)
+                    {
+                        continue;
+                    }
+
+                    var ownerId = entity.OwnerId;
+                    if (ownerId.IsNull)
+                    {
+                        continue;
+                    }
+
+                    if (!owners.TryGetValue(ownerId, out var ownerInfo))
+                    {
+                        BlockTableRecord? owner;
+                        Layout? layout;
+                        try
+                        {
+                            owner = tr.GetObject(ownerId, OpenMode.ForRead, false) as BlockTableRecord;
+                            if (owner == null || !owner.IsLayout || owner.LayoutId.IsNull)
+                            {
+                                continue;
+                            }
+
+                            layout = tr.GetObject(owner.LayoutId, OpenMode.ForRead, false) as Layout;
+                            if (layout == null)
+                            {
+                                continue;
+                            }
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        ownerInfo = (owner, layout);
+                        owners[ownerId] = ownerInfo;
+                        groups[ownerId] = new List<ObjectId>();
+                    }
+
+                    groups[ownerId].Add(id);
+                }
+
+                foreach (var pair in groups)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (owner, layout) = owners[pair.Key];
+                    ReportScan($"正在收集矩形（{layout.LayoutName}）…");
+                    var rectangles = CollectRectanglesFromEntities(
+                        tr,
+                        pair.Value,
+                        recognizeFourLines,
+                        layout.LayoutName);
+                    spaceData.Add((rectangles, owner.ObjectId, layout.LayoutName, !layout.ModelType, layout.TabOrder));
+                }
+
+                tr.Commit();
+            }
+
+            spaceData.Sort((a, b) => a.TabOrder.CompareTo(b.TabOrder));
+
+            var allResults = new List<Result>();
+            for (var i = 0; i < spaceData.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (rectangles, ownerId, layoutName, isPaperSpace, tabOrder) = spaceData[i];
+                ReportScan(
+                    $"正在筛选纸张与空框（{layoutName}）…",
+                    i + 1,
+                    spaceData.Count);
+                var results = FilterAndPackageRectangles(
+                    document.Database,
+                    rectangles,
+                    isPaperSpace
+                        ? null
+                        : CadCoordinateSystem.CreateModelContext(document.Editor, true),
+                    ownerId,
+                    sourceFile,
+                    layoutName,
+                    isPaperSpace,
+                    tabOrder,
+                    effectivePaperToleranceMm,
+                    storedSettings.LongPaperSnapToleranceMm,
+                    storedSettings.CustomScales);
+                allResults.AddRange(results);
+            }
+
+            ReportScan($"识别完成，共 {allResults.Count} 个图框", allResults.Count, Math.Max(1, allResults.Count));
+            return allResults;
+        }
+        finally
+        {
+            _activeProgress = previousProgress;
+            _activeCancel = previousCancel;
+        }
+    }
+
+    /// <summary>
     /// 侧载扫描：用已打开的 <see cref="Database"/>（通常来自 ReadDwgFile）按范围/布局名过滤扫描矩形框。
     /// 不依赖 Document/Editor；模型空间坐标保持 WCS，不向当前图绘制 overlay。
     /// </summary>
@@ -739,6 +903,89 @@ public static class RectangleFrameScanner
             _activeCancel.ThrowIfCancellationRequested();
             ReportScan(
                 $"正在拼合四线矩形（线段 {segments.Count:N0}）…",
+                0,
+                0);
+            var fourSw = profile != null ? Stopwatch.StartNew() : null;
+            var before = rectangles.Count;
+            rectangles.AddRange(FindRectanglesFromSegments(segments));
+            if (fourSw != null && profile != null)
+            {
+                fourSw.Stop();
+                profile.FourLineMatchMs += fourSw.ElapsedMilliseconds;
+                profile.FourLineRectCount += rectangles.Count - before;
+            }
+        }
+
+        return rectangles;
+    }
+
+    /// <summary>
+    /// 只遍历给定实体（对象选择路径），其余矩形检测与四线拼合规则与空间扫描一致。
+    /// </summary>
+    private static List<LocalRectangle> CollectRectanglesFromEntities(
+        Transaction tr,
+        IEnumerable<ObjectId> entityIds,
+        bool recognizeFourLineRectangles,
+        string layoutName = "")
+    {
+        var profile = _activeProfile;
+        var rectangles = new List<LocalRectangle>();
+        var segments = recognizeFourLineRectangles ? new List<LineSegment>() : null;
+        var entitySw = profile != null ? Stopwatch.StartNew() : null;
+        var topLevelVisits = 0;
+        foreach (var id in entityIds)
+        {
+            Entity? entity;
+            try
+            {
+                if (id.IsNull)
+                {
+                    continue;
+                }
+
+                entity = tr.GetObject(id, OpenMode.ForRead, false) as Entity;
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (entity == null)
+            {
+                continue;
+            }
+
+            topLevelVisits++;
+            CollectEntityRectangles(
+                tr,
+                entity,
+                Matrix3d.Identity,
+                rectangles,
+                segments,
+                new HashSet<ObjectId>(),
+                0,
+                recognizeFourLineRectangles);
+        }
+
+        if (entitySw != null && profile != null)
+        {
+            entitySw.Stop();
+            profile.CollectEntitiesMs += entitySw.ElapsedMilliseconds;
+            profile.TopLevelEntityVisits += topLevelVisits;
+            profile.ClosedPolylineRectCount += rectangles.Count;
+            if (segments != null)
+            {
+                profile.LineSegmentCount += segments.Count;
+            }
+        }
+
+        if (segments != null && segments.Count >= 4)
+        {
+            _activeCancel.ThrowIfCancellationRequested();
+            ReportScan(
+                string.IsNullOrEmpty(layoutName)
+                    ? $"正在拼合四线矩形（线段 {segments.Count:N0}）…"
+                    : $"正在拼合四线矩形（{layoutName}，线段 {segments.Count:N0}）…",
                 0,
                 0);
             var fourSw = profile != null ? Stopwatch.StartNew() : null;
