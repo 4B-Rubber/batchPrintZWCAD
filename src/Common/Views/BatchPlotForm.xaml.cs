@@ -279,7 +279,7 @@ public sealed partial class BatchPlotForm : Window
                 "INFO",
                 prompt.Scope != null
                     ? $"扫描当前图完成，识别 {_jobs.Count} 张。"
-                    : $"对象扫描当前图完成，识别 {_jobs.Count} 张。");
+                    : $"框选扫描当前图完成，识别 {_jobs.Count} 张。");
         }
         finally
         {

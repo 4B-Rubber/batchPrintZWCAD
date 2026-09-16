@@ -1021,7 +1021,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show("选择对象扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("框选扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {

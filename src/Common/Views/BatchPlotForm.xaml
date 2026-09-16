@@ -58,7 +58,7 @@
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanCurrentDrawing_Click"
                         ToolTip="扫描当前打开图纸中的全部匹配图框。" />
-                <Button x:Name="_scanObjectsButton" Content="对象扫描" MinWidth="92"
+                <Button x:Name="_scanObjectsButton" Content="框选扫描" MinWidth="92"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanSelectedObjects_Click"
                         ToolTip="回到 CAD 选择图框块（可点选或框选）；未拾取时右键可选扫描范围。" />

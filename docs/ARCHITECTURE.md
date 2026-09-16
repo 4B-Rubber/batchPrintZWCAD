@@ -208,16 +208,16 @@ TitleBlockScanner.Scan(Document, TitleBlockLibrary)
 **实现**：[`RectangleFrameScanner.cs`](src/Common/Services/Scanning/RectangleFrameScanner.cs)
 
 > 注意：与图框库模式不同，矩形框批打采用"先弹窗后扫描"的 UX 设计。
-> 用户打开面板后，点击"扫描当前图"（选择范围）或"对象扫描"（点选/框选对象，未拾取时可右键选范围）触发扫描，
+> 用户打开面板后，点击"扫描当前图"（选择范围）或"框选扫描"（点选/框选对象，未拾取时可右键选范围）触发扫描，
 > 而非打开命令后立即扫描。
 
 ### 5.1 整体流程
 
 矩形框扫描提供三个入口：
 
-- `ScanWindow(Document, scanWindow)` — 扫描当前空间的几何窗口（API 保留；面板入口已改为对象扫描）
+- `ScanWindow(Document, scanWindow)` — 扫描当前空间的几何窗口（API 保留；面板入口已改为对象选择式框选扫描）
 - `ScanScope(Document, scope)` — 按范围扫描多个布局（全部/仅布局/当前/仅模型）
-- `ScanSelection(Document, selectedIds)` — 只扫描用户选中的 ObjectId（面板「对象扫描」）
+- `ScanSelection(Document, selectedIds)` — 只扫描用户选中的 ObjectId（面板「框选扫描」）
 
 #### ScanScope 多布局流程
 
