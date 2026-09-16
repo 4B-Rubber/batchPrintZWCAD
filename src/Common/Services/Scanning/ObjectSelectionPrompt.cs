@@ -36,30 +36,14 @@ internal static class ObjectSelectionPrompt
 {
     /// <summary>图框块扫描：选择阶段只允许 INSERT（块参照）。</summary>
     public static SelectionFilter TitleBlockFilter()
-    {
-        return new SelectionFilter(new[]
-        {
-            new TypedValue((int)DxfCode.Start, "INSERT")
-        });
-    }
+        => ScanCandidateFilter.TitleBlockSelectionFilter();
 
     /// <summary>
     /// 矩形框扫描：块参照与各类多段线；开启四线识别时额外允许 LINE。
     /// </summary>
     /// <param name="includeLines">是否把直线纳入可选类型。</param>
     public static SelectionFilter RectangleFrameFilter(bool includeLines)
-    {
-        var allowedTypes = new List<string> { "INSERT", "LWPOLYLINE", "POLYLINE", "3DPOLYLINE" };
-        if (includeLines)
-        {
-            allowedTypes.Add("LINE");
-        }
-
-        return new SelectionFilter(new[]
-        {
-            new TypedValue((int)DxfCode.Start, string.Join(",", allowedTypes))
-        });
-    }
+        => ScanCandidateFilter.RectangleFrameSelectionFilter(includeLines);
 
     /// <summary>
     /// 提示用户点选或框选对象；未拾取时右键弹出扫描范围菜单，已拾取时右键确认选择。

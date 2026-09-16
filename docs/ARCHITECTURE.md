@@ -216,8 +216,8 @@ TitleBlockScanner.Scan(Document, TitleBlockLibrary)
 矩形框扫描提供三个入口：
 
 - `ScanWindow(Document, scanWindow)` — 扫描当前空间的几何窗口（API 保留；面板入口已改为对象选择式框选扫描）
-- `ScanScope(Document, scope)` — 按范围扫描多个布局（全部/仅布局/当前/仅模型）
-- `ScanSelection(Document, selectedIds)` — 只扫描用户选中的 ObjectId（面板「框选扫描」）
+- `ScanScope(Document, scope)` — 按范围扫描；先经 `ScanCandidateFilter` 过滤候选 ObjectId，再识别
+- `ScanSelection(Document, selectedIds)` — 只扫描用户选中的 ObjectId（面板「框选扫描」；同样经类型过滤）
 
 #### ScanScope 多布局流程
 

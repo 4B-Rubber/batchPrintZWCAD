@@ -833,6 +833,7 @@ public static class RectangleFrameScanner
     /// <summary>
     /// 遍历单个空间内的闭合 PL 矩形；开关开启时，同时收集顶层独立直线/直线型 PL，
     /// 经四叉树找出四边闭环后转换为同一个 LocalRectangle 流程。
+    /// 先按 <see cref="ScanCandidateFilter"/> 过滤候选 ObjectId，再识别。
     /// </summary>
     private static List<LocalRectangle> CollectRectanglesFromSpace(
         Transaction tr,
@@ -841,9 +842,7 @@ public static class RectangleFrameScanner
         string layoutName = "")
     {
         var profile = _activeProfile;
-        var rectangles = new List<LocalRectangle>();
-        var segments = recognizeFourLineRectangles ? new List<LineSegment>() : null;
-        var entitySw = profile != null ? Stopwatch.StartNew() : null;
+        var candidateIds = new List<ObjectId>();
         var topLevelVisits = 0;
         const int progressEvery = 2500;
         foreach (ObjectId id in owner)
@@ -855,68 +854,45 @@ public static class RectangleFrameScanner
                 {
                     ReportScan(
                         string.IsNullOrEmpty(layoutName)
-                            ? "正在遍历实体…"
-                            : $"正在遍历实体（{layoutName}）…");
+                            ? "正在过滤候选对象…"
+                            : $"正在过滤候选对象（{layoutName}）…");
                 }
                 else
                 {
                     ReportScan(
                         string.IsNullOrEmpty(layoutName)
-                            ? $"正在遍历实体… 已处理 {topLevelVisits:N0}"
-                            : $"正在遍历实体（{layoutName}）… 已处理 {topLevelVisits:N0}",
+                            ? $"正在过滤候选对象… 已处理 {topLevelVisits:N0}"
+                            : $"正在过滤候选对象（{layoutName}）… 已处理 {topLevelVisits:N0}",
                         topLevelVisits,
                         0);
                 }
             }
 
-            if (tr.GetObject(id, OpenMode.ForRead, false) is not Entity entity)
+            topLevelVisits++;
+            DBObject? obj;
+            try
+            {
+                obj = tr.GetObject(id, OpenMode.ForRead, false);
+            }
+            catch
             {
                 continue;
             }
 
-            topLevelVisits++;
-            CollectEntityRectangles(
-                tr,
-                entity,
-                Matrix3d.Identity,
-                rectangles,
-                segments,
-                new HashSet<ObjectId>(),
-                0,
-                recognizeFourLineRectangles);
+            if (!ScanCandidateFilter.IsRectangleFrameCandidate(obj, recognizeFourLineRectangles))
+            {
+                continue;
+            }
+
+            candidateIds.Add(id);
         }
 
-        if (entitySw != null && profile != null)
+        if (profile != null)
         {
-            entitySw.Stop();
-            profile.CollectEntitiesMs += entitySw.ElapsedMilliseconds;
             profile.TopLevelEntityVisits += topLevelVisits;
-            profile.ClosedPolylineRectCount += rectangles.Count;
-            if (segments != null)
-            {
-                profile.LineSegmentCount += segments.Count;
-            }
         }
 
-        if (segments != null && segments.Count >= 4)
-        {
-            _activeCancel.ThrowIfCancellationRequested();
-            ReportScan(
-                $"正在拼合四线矩形（线段 {segments.Count:N0}）…",
-                0,
-                0);
-            var fourSw = profile != null ? Stopwatch.StartNew() : null;
-            var before = rectangles.Count;
-            rectangles.AddRange(FindRectanglesFromSegments(segments));
-            if (fourSw != null && profile != null)
-            {
-                fourSw.Stop();
-                profile.FourLineMatchMs += fourSw.ElapsedMilliseconds;
-                profile.FourLineRectCount += rectangles.Count - before;
-            }
-        }
-
-        return rectangles;
+        return CollectRectanglesFromEntities(tr, candidateIds, recognizeFourLineRectangles, layoutName);
     }
 
     /// <summary>
@@ -950,7 +926,8 @@ public static class RectangleFrameScanner
                 continue;
             }
 
-            if (entity == null)
+            if (entity == null
+                || !ScanCandidateFilter.IsRectangleFrameCandidate(entity, recognizeFourLineRectangles))
             {
                 continue;
             }

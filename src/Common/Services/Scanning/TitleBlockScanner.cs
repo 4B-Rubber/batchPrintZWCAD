@@ -33,6 +33,9 @@ public static class TitleBlockScanner
             CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode));
     }
 
+    /// <summary>
+    /// 扫描当前图：先按公共类型过滤收集候选块参照，再识别（与框选扫描同一套过滤规则）。
+    /// </summary>
     public static List<PlotJob> Scan(
         Document doc,
         TitleBlockLibrary library,
@@ -40,19 +43,12 @@ public static class TitleBlockScanner
         double? paperMatchToleranceMm = null,
         ISet<string>? allowedLayoutNames = null)
     {
-        var sourceName = string.IsNullOrWhiteSpace(doc.Database.Filename)
-            ? doc.Name
-            : doc.Database.Filename;
-        return Scan(
+        var currentSpaceName = GetCurrentSpaceName(doc.Database);
+        var candidateIds = ScanCandidateFilter.CollectInLayouts(
             doc.Database,
-            library,
-            sourceName,
-            null,
-            scope,
-            GetCurrentSpaceName(doc.Database),
-            paperMatchToleranceMm,
-            CadCoordinateSystem.CreateModelContext(doc.Editor, doc.Database.TileMode),
-            allowedLayoutNames);
+            (layout, owner) => ShouldScanLayout(layout, owner, scope, currentSpaceName, allowedLayoutNames),
+            ScanCandidateFilter.IsTitleBlockCandidate);
+        return Scan(doc, library, candidateIds, paperMatchToleranceMm);
     }
 
     public static List<PlotJob> Scan(Document doc, TitleBlockLibrary library, Extents3d? scanWindow, double? paperMatchToleranceMm = null)
@@ -178,6 +174,24 @@ public static class TitleBlockScanner
         CadSelectionWindow? modelCoordinateContext,
         ISet<string>? allowedLayoutNames)
     {
+        // 无几何窗口时：先公共类型过滤收集候选 ObjectId，再走与框选扫描相同的识别路径。
+        if (scanWindow == null)
+        {
+            var candidateIds = ScanCandidateFilter.CollectInLayouts(
+                db,
+                (layout, owner) => ShouldScanLayout(layout, owner, scope, currentSpaceName, allowedLayoutNames),
+                ScanCandidateFilter.IsTitleBlockCandidate);
+            var storedForSelected = AppSettingsStore.Load();
+            return ScanSelectedCore(
+                db,
+                library,
+                sourceName,
+                candidateIds,
+                effectivePaperToleranceMm,
+                modelCoordinateContext,
+                storedForSelected);
+        }
+
         var jobs = new List<PlotJob>();
         var warnings = new List<string>();
         var storedSettings = AppSettingsStore.Load();
@@ -215,10 +229,13 @@ public static class TitleBlockScanner
 
             foreach (ObjectId id in owner)
             {
-                if (tr.GetObject(id, OpenMode.ForRead, false) is not BlockReference blockRef)
+                var obj = tr.GetObject(id, OpenMode.ForRead, false);
+                if (!ScanCandidateFilter.IsTitleBlockCandidate(obj))
                 {
                     continue;
                 }
+
+                var blockRef = (BlockReference)obj;
 
                 var job = TryCreateJobFromBlockReference(
                     tr,
