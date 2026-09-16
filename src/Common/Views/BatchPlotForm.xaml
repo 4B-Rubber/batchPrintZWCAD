@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:ZwcadBatchPlot"
         x:Class="ZwcadBatchPlot.BatchPlotForm"
-        Title="LA图框块批量打印 V1.15.7.3"
+        Title="LA图框块批量打印 V1.15.7.4"
         Width="900" Height="520"
         MinWidth="720" MinHeight="460"
         WindowStartupLocation="CenterScreen"
@@ -58,10 +58,10 @@
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanCurrentDrawing_Click"
                         ToolTip="扫描当前打开图纸中的全部匹配图框。" />
-                <Button x:Name="_scanWindowButton" Content="框选扫描" MinWidth="92"
+                <Button x:Name="_scanObjectsButton" Content="框选扫描" MinWidth="92"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
-                        Click="ScanSelectedWindow_Click"
-                        ToolTip="回到 CAD 框选区域，只识别框内图框。" />
+                        Click="ScanSelectedObjects_Click"
+                        ToolTip="回到 CAD 选择图框块（可点选或框选）；未拾取时右键可选扫描范围。" />
                 <Button x:Name="_addFilesButton" Content="多文件批打" MinWidth="108"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="AddDwgFiles_Click"

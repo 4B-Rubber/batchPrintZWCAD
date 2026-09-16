@@ -1,6 +1,6 @@
 # LA批量打印架构文档
 
-> 产品名 **LA批量打印**，覆盖 ZWCAD 与 AutoCAD 双平台，当前版本 **1.15.7.3**。  
+> 产品名 **LA批量打印**，覆盖 ZWCAD 与 AutoCAD 双平台，当前版本 **1.15.7.4**。  
 > 本文档反映当前实现：图框库（含日期/版次/阶段/信息可选字段）、动态块按「块名+可见性名」识别、图框块任意比例与固定图框长宽比选纸、矩形框比例列表、图号重排、CSV 导出、PDF/PNG/JPG/DWF/DWG 多格式输出、自有栅格绘图仪、所选格式预览、随包 PIA2 模板、另存副本式 DWG 拆图、纸面 1mm 外边框内退等。
 
 ---
@@ -208,15 +208,16 @@ TitleBlockScanner.Scan(Document, TitleBlockLibrary)
 **实现**：[`RectangleFrameScanner.cs`](src/Common/Services/Scanning/RectangleFrameScanner.cs)
 
 > 注意：与图框库模式不同，矩形框批打采用"先弹窗后扫描"的 UX 设计。
-> 用户打开面板后，点击"扫描当前图"（选择范围）或"框选扫描"（框选区域）触发扫描，
+> 用户打开面板后，点击"扫描当前图"（选择范围）或"框选扫描"（点选/框选对象，未拾取时可右键选范围）触发扫描，
 > 而非打开命令后立即扫描。
 
 ### 5.1 整体流程
 
-矩形框扫描提供两个入口：
+矩形框扫描提供三个入口：
 
-- `ScanWindow(Document, scanWindow)` — 扫描当前空间的框选窗口（单布局）
-- `ScanScope(Document, scope)` — 按范围扫描多个布局（全部/仅布局/当前/仅模型）
+- `ScanWindow(Document, scanWindow)` — 扫描当前空间的几何窗口（API 保留；面板入口已改为对象选择式框选扫描）
+- `ScanScope(Document, scope)` — 按范围扫描；先经 `ScanCandidateFilter` 过滤候选 ObjectId，再识别
+- `ScanSelection(Document, selectedIds)` — 只扫描用户选中的 ObjectId（面板「框选扫描」；同样经类型过滤）
 
 #### ScanScope 多布局流程
 
@@ -867,7 +868,7 @@ LA批量打印/
 ├── docs/
 │   ├── ARCHITECTURE.md              ← 本文档
 │   ├── tutorial.html                ← 图文教程网页
-│   ├── RELEASE_NOTES_v1.15.7.3.md   ← 当前版本发布说明
+│   ├── RELEASE_NOTES_v1.15.7.4.md   ← 当前版本发布说明
 │   ├── 用户使用说明.md
 │   └── 软件说明.txt
 │
@@ -1003,7 +1004,7 @@ LA批量打印/
 │   └── 使用说明.txt
 │
 ├── release/                         ← 本地发布目录（不纳入 Git）
-│   └── v1.15.7.3/
+│   └── v1.15.7.4/
 │       ├── ZWCAD/
 │       ├── AutoCAD2015-2024/
 │       ├── AutoCAD2025-2027/

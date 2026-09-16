@@ -129,7 +129,7 @@ public sealed partial class RectangleBatchPlotForm : Window
     private readonly BindingList<Row> _rows = new();
     private readonly BindingList<Row> _displayRows = new();
     private CancellationTokenSource? _printCts;
-    private CadSelectionWindow? _scanWindow;
+    private List<ObjectId>? _scanSelectionIds;
     private TitleBlockScanScope? _lastScanScope;
     private bool _updating;
     private bool _updatingPrintSelection;
@@ -187,7 +187,8 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
 
-    private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
+    private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
+
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
     private void ReloadFrames_Click(object sender, RoutedEventArgs e) => ReloadFrames();
@@ -659,9 +660,9 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 results = ScanScopeWithProgress(_lastScanScope.Value);
             }
-            else if (_scanWindow != null)
+            else if (_scanSelectionIds != null)
             {
-                results = ScanWindowWithProgress(_scanWindow);
+                results = ScanSelectionWithProgress(_scanSelectionIds);
             }
             else
             {
@@ -690,7 +691,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     }
 
     private TitleBlockScanScope? PromptScanScope() => BatchPlotCommands.PromptScanScope(this);
-
 
     /// <summary>
     /// 扫描失败时把完整异常给用户看（弹窗 + 剪贴板 + 日志），避免只剩 eNotApplicable 无法反馈。
@@ -801,7 +801,7 @@ public sealed partial class RectangleBatchPlotForm : Window
         ReplaceBindingListContents(_displayRows, Array.Empty<Row>());
         ClearSequenceOverlay();
         _lastScanScope = null;
-        _scanWindow = null;
+        _scanSelectionIds = null;
         _hasAttributeIdentity = false;
         UpdateAttributeIdentityColumns();
 
@@ -930,6 +930,9 @@ public sealed partial class RectangleBatchPlotForm : Window
         _lastOverlayRebuildKey = null;
     }
 
+    /// <summary>
+    /// 扫描当前图：弹出范围对话框后按所选空间识别矩形图框。
+    /// </summary>
     private void ScanCurrentDrawing()
     {
         var scope = PromptScanScope();
@@ -949,7 +952,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             TransformResultsToDcs(results);
             _lastScanScope = scope;
-            _scanWindow = null;
+            _scanSelectionIds = null;
             LoadRows(results);
         }
         catch (OperationCanceledException)
@@ -962,40 +965,55 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
     }
 
-    private void ScanSelectedWindow()
+    /// <summary>
+    /// 框选扫描：先按类型过滤选择对象，再识别选中矩形图框。
+    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
+    /// </summary>
+    private void ScanSelectedObjects()
     {
         CadWindowFocus.HideForCadInput(this);
         try
         {
-            var editor = _document.Editor;
-            var first = editor.GetPoint(new PromptPointOptions("\n框选矩形图框扫描范围第一个角点: "));
-            if (first.Status != PromptStatus.OK)
+            var prompt = ObjectSelectionPrompt.Prompt(
+                _document.Editor,
+                "\n选择要批量打印的矩形图框对象(右键选择扫描范围): ",
+                ObjectSelectionPrompt.RectangleFrameFilter(_settings.RecognizeFourLineRectangleFrames));
+            if (prompt.Cancelled)
             {
                 return;
             }
 
-            var second = editor.GetCorner(new PromptCornerOptions("\n框选矩形图框扫描范围对角点: ", first.Value));
-            if (second.Status != PromptStatus.OK)
+            List<RectangleFrameScanner.Result> results;
+            if (prompt.Scope is { } scope)
+            {
+                results = ScanScopeWithProgress(scope);
+                if (results.Count == 0)
+                {
+                    MessageBox.Show("扫描范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                TransformResultsToDcs(results);
+                _lastScanScope = scope;
+                _scanSelectionIds = null;
+                LoadRows(results);
+                return;
+            }
+
+            if (prompt.SelectedIds is not { Length: > 0 } selectedIds)
             {
                 return;
             }
 
-            // 保留原始 UCS 矩形；只把实体几何保留为 WCS，禁止在这里提前取 WCS 包围盒。
-            var window = CadCoordinateSystem.CreateSelectionWindow(
-                editor,
-                first.Value,
-                second.Value,
-                _document.Database.TileMode);
-
-            var results = ScanWindowWithProgress(window);
+            results = ScanSelectionWithProgress(selectedIds);
             if (results.Count == 0)
             {
-                MessageBox.Show("框选范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("选中对象内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             TransformResultsToDcs(results);
-            _scanWindow = window;
+            _scanSelectionIds = selectedIds.ToList();
             _lastScanScope = null;
             LoadRows(results);
         }
@@ -1026,13 +1044,13 @@ public sealed partial class RectangleBatchPlotForm : Window
             session.Token);
     }
 
-    /// <summary>带进度窗执行框选扫描。</summary>
-    private List<RectangleFrameScanner.Result> ScanWindowWithProgress(CadSelectionWindow window)
+    /// <summary>带进度窗执行对象选择扫描。</summary>
+    private List<RectangleFrameScanner.Result> ScanSelectionWithProgress(IEnumerable<ObjectId> selectedIds)
     {
         using var session = RectangleScanProgressSession.Start(this);
-        return RectangleFrameScanner.ScanWindow(
+        return RectangleFrameScanner.ScanSelection(
             _document,
-            window,
+            selectedIds,
             _settings.PaperMatchToleranceMm,
             _settings.RecognizeFourLineRectangleFrames,
             session.Progress,

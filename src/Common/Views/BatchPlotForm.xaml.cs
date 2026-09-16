@@ -217,7 +217,11 @@ public sealed partial class BatchPlotForm : Window
         AppendLog("INFO", $"扫描当前图完成，识别 {_jobs.Count} 张。");
     }
 
-    private void ScanSelectedWindow()
+    /// <summary>
+    /// 框选扫描：先按类型过滤选择对象，再识别选中图框。
+    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
+    /// </summary>
+    private void ScanSelectedObjects()
     {
         var library = TitleBlockLibraryStore.Load();
         if (library.Blocks.Count == 0)
@@ -230,39 +234,51 @@ public sealed partial class BatchPlotForm : Window
         CadWindowFocus.HideForCadInput(this);
         try
         {
-            var editor = _currentDocument.Editor;
-            var first = editor.GetPoint(new PromptPointOptions("\n框选扫描范围第一个角点: "));
-            if (first.Status != PromptStatus.OK)
+            var prompt = ObjectSelectionPrompt.Prompt(
+                _currentDocument.Editor,
+                "\n选择要批量打印的图框块对象(右键选择扫描范围): ",
+                ObjectSelectionPrompt.TitleBlockFilter());
+            if (prompt.Cancelled)
             {
                 return;
             }
 
-            var second = editor.GetCorner(new PromptCornerOptions("\n框选扫描范围对角点: ", first.Value));
-            if (second.Status != PromptStatus.OK)
+            List<PlotJob> scannedJobs;
+            if (prompt.Scope is { } scope)
+            {
+                scannedJobs = TitleBlockScanner.Scan(
+                    _currentDocument,
+                    library,
+                    scope,
+                    _settings.PaperMatchToleranceMm);
+            }
+            else if (prompt.SelectedIds is { Length: > 0 } selectedIds)
+            {
+                scannedJobs = TitleBlockScanner.Scan(
+                    _currentDocument,
+                    library,
+                    selectedIds,
+                    _settings.PaperMatchToleranceMm);
+                if (scannedJobs.Count == 0)
+                {
+                    System.Windows.MessageBox.Show("选中对象中未识别到任何图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+            }
+            else
             {
                 return;
             }
-
-            // 保留用户框选时的 UCS 矩形和基轴。旋转 UCS 不能先压成 WCS 包围盒，
-            // 否则扫描/打印阶段再次取 DCS 包围盒时范围会被放大。
-            var window = CadCoordinateSystem.CreateSelectionWindow(
-                editor,
-                first.Value,
-                second.Value,
-                _currentDocument.Database.TileMode);
 
             _selectedDwgFiles.Clear();
-            var scannedJobs = TitleBlockScanner.Scan(
-                _currentDocument,
-                library,
-                window,
-                _settings.PaperMatchToleranceMm);
-
-            // 扫描结果坐标是 WCS，转为 DCS 后打印
             TransformScannedJobsToDcs(scannedJobs);
             SortAndRefreshOutputPaths(scannedJobs);
             ScheduleSequenceOverlayForCurrentJobs();
-            AppendLog("INFO", $"框选扫描当前图完成，识别 {_jobs.Count} 张。");
+            AppendLog(
+                "INFO",
+                prompt.Scope != null
+                    ? $"扫描当前图完成，识别 {_jobs.Count} 张。"
+                    : $"框选扫描当前图完成，识别 {_jobs.Count} 张。");
         }
         finally
         {
@@ -2541,7 +2557,7 @@ public sealed partial class BatchPlotForm : Window
 
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
 
-    private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
+    private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
 
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
