@@ -217,59 +217,6 @@ public sealed partial class BatchPlotForm : Window
         AppendLog("INFO", $"扫描当前图完成，识别 {_jobs.Count} 张。");
     }
 
-    private void ScanSelectedWindow()
-    {
-        var library = TitleBlockLibraryStore.Load();
-        if (library.Blocks.Count == 0)
-        {
-            System.Windows.MessageBox.Show("图框库为空，请先新增图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
-            ClearSequenceOverlay();
-            return;
-        }
-
-        CadWindowFocus.HideForCadInput(this);
-        try
-        {
-            var editor = _currentDocument.Editor;
-            var first = editor.GetPoint(new PromptPointOptions("\n框选扫描范围第一个角点: "));
-            if (first.Status != PromptStatus.OK)
-            {
-                return;
-            }
-
-            var second = editor.GetCorner(new PromptCornerOptions("\n框选扫描范围对角点: ", first.Value));
-            if (second.Status != PromptStatus.OK)
-            {
-                return;
-            }
-
-            // 保留用户框选时的 UCS 矩形和基轴。旋转 UCS 不能先压成 WCS 包围盒，
-            // 否则扫描/打印阶段再次取 DCS 包围盒时范围会被放大。
-            var window = CadCoordinateSystem.CreateSelectionWindow(
-                editor,
-                first.Value,
-                second.Value,
-                _currentDocument.Database.TileMode);
-
-            _selectedDwgFiles.Clear();
-            var scannedJobs = TitleBlockScanner.Scan(
-                _currentDocument,
-                library,
-                window,
-                _settings.PaperMatchToleranceMm);
-
-            // 扫描结果坐标是 WCS，转为 DCS 后打印
-            TransformScannedJobsToDcs(scannedJobs);
-            SortAndRefreshOutputPaths(scannedJobs);
-            ScheduleSequenceOverlayForCurrentJobs();
-            AppendLog("INFO", $"框选扫描当前图完成，识别 {_jobs.Count} 张。");
-        }
-        finally
-        {
-            CadWindowFocus.RestoreDialog(this);
-        }
-    }
-
     /// <summary>
     /// 对象扫描：在 CAD 中选择图框块（选择阶段过滤 INSERT），只识别选中对象。
     /// 未拾取时右键弹出扫描范围菜单，走与「扫描当前图」相同的范围扫描。
@@ -2610,8 +2557,6 @@ public sealed partial class BatchPlotForm : Window
     // ── UI 事件处理器 ──
 
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
-
-    private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
 
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
 

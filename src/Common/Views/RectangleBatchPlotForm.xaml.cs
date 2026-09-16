@@ -129,7 +129,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     private readonly BindingList<Row> _rows = new();
     private readonly BindingList<Row> _displayRows = new();
     private CancellationTokenSource? _printCts;
-    private CadSelectionWindow? _scanWindow;
     private List<ObjectId>? _scanSelectionIds;
     private TitleBlockScanScope? _lastScanScope;
     private bool _updating;
@@ -187,8 +186,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     // ── 事件处理（XAML 绑定） ──
 
     private void ScanCurrentDrawing_Click(object sender, RoutedEventArgs e) => ScanCurrentDrawing();
-
-    private void ScanSelectedWindow_Click(object sender, RoutedEventArgs e) => ScanSelectedWindow();
 
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
@@ -662,10 +659,6 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 results = ScanScopeWithProgress(_lastScanScope.Value);
             }
-            else if (_scanWindow != null)
-            {
-                results = ScanWindowWithProgress(_scanWindow);
-            }
             else if (_scanSelectionIds != null)
             {
                 results = ScanSelectionWithProgress(_scanSelectionIds);
@@ -808,7 +801,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         ReplaceBindingListContents(_displayRows, Array.Empty<Row>());
         ClearSequenceOverlay();
         _lastScanScope = null;
-        _scanWindow = null;
         _scanSelectionIds = null;
         _hasAttributeIdentity = false;
         UpdateAttributeIdentityColumns();
@@ -957,7 +949,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             TransformResultsToDcs(results);
             _lastScanScope = scope;
-            _scanWindow = null;
             _scanSelectionIds = null;
             LoadRows(results);
         }
@@ -968,58 +959,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         catch (Exception ex)
         {
             MessageBox.Show("扫描当前图失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
-
-    private void ScanSelectedWindow()
-    {
-        CadWindowFocus.HideForCadInput(this);
-        try
-        {
-            var editor = _document.Editor;
-            var first = editor.GetPoint(new PromptPointOptions("\n框选矩形图框扫描范围第一个角点: "));
-            if (first.Status != PromptStatus.OK)
-            {
-                return;
-            }
-
-            var second = editor.GetCorner(new PromptCornerOptions("\n框选矩形图框扫描范围对角点: ", first.Value));
-            if (second.Status != PromptStatus.OK)
-            {
-                return;
-            }
-
-            // 保留原始 UCS 矩形；只把实体几何保留为 WCS，禁止在这里提前取 WCS 包围盒。
-            var window = CadCoordinateSystem.CreateSelectionWindow(
-                editor,
-                first.Value,
-                second.Value,
-                _document.Database.TileMode);
-
-            var results = ScanWindowWithProgress(window);
-            if (results.Count == 0)
-            {
-                MessageBox.Show("框选范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            TransformResultsToDcs(results);
-            _scanWindow = window;
-            _lastScanScope = null;
-            _scanSelectionIds = null;
-            LoadRows(results);
-        }
-        catch (OperationCanceledException)
-        {
-            MessageBox.Show("已取消识别。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("框选扫描失败: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            CadWindowFocus.RestoreDialog(this);
         }
     }
 
@@ -1054,7 +993,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
                 TransformResultsToDcs(results);
                 _lastScanScope = scope;
-                _scanWindow = null;
                 _scanSelectionIds = null;
                 LoadRows(results);
                 return;
@@ -1074,7 +1012,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
             TransformResultsToDcs(results);
             _scanSelectionIds = selectedIds.ToList();
-            _scanWindow = null;
             _lastScanScope = null;
             LoadRows(results);
         }
@@ -1099,19 +1036,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         return RectangleFrameScanner.ScanScope(
             _document,
             scope,
-            _settings.PaperMatchToleranceMm,
-            _settings.RecognizeFourLineRectangleFrames,
-            session.Progress,
-            session.Token);
-    }
-
-    /// <summary>带进度窗执行框选扫描。</summary>
-    private List<RectangleFrameScanner.Result> ScanWindowWithProgress(CadSelectionWindow window)
-    {
-        using var session = RectangleScanProgressSession.Start(this);
-        return RectangleFrameScanner.ScanWindow(
-            _document,
-            window,
             _settings.PaperMatchToleranceMm,
             _settings.RecognizeFourLineRectangleFrames,
             session.Progress,
