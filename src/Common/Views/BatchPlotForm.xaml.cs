@@ -648,6 +648,12 @@ public sealed partial class BatchPlotForm : Window
         _grid.CurrentCell = new DataGridCellInfo(job, _grid.CurrentColumn ?? _grid.Columns[0]);
     }
 
+    private void Grid_LoadingRow(object sender, DataGridRowEventArgs e)
+    {
+        // GetIndex 是 Items 真实下标；虚拟化回收时 LoadingRow 会重入，序号保持正确。
+        e.Row.Header = (e.Row.GetIndex() + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
     private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_grid.CurrentItem is PlotJob job)

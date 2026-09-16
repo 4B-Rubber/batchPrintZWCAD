@@ -152,9 +152,10 @@
 
         <!-- 作业清单（原 DataGridView） -->
         <DataGrid x:Name="_grid" Style="{StaticResource PluginGridStyle}"
-                  Margin="0" AlternationCount="100000"
+                  Margin="0"
                   BeginningEdit="Grid_BeginningEdit"
                   CellEditEnding="Grid_CellEditEnding"
+                  LoadingRow="Grid_LoadingRow"
                   MouseDoubleClick="Grid_MouseDoubleClick"
                   PreviewMouseLeftButtonDown="Grid_PreviewMouseLeftButtonDown"
                   PreviewMouseRightButtonDown="Grid_PreviewMouseRightButtonDown"
@@ -166,7 +167,7 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock VerticalAlignment="Center"
-                                       Text="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=AlternationIndex, Converter={StaticResource RowIndexConverter}}" />
+                                       Text="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=Header}" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
