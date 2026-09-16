@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 #if AUTOCAD
 using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 #else
 using ZwSoft.ZwCAD.ApplicationServices;
+using ZwSoft.ZwCAD.Colors;
 using ZwSoft.ZwCAD.DatabaseServices;
 using ZwSoft.ZwCAD.EditorInput;
 using ZwSoft.ZwCAD.Geometry;
@@ -54,49 +56,160 @@ public static class DirectoryTableGenerator
             return;
         }
 
-        var widths = columns.Select(x => Math.Max(1, x.Width)).ToArray();
-        var rowHeight = Math.Max(1, settings.DirectoryRowHeight);
         var headerRows = settings.DirectoryDrawHeader ? 1 : 0;
-        var rowCount = jobs.Count + headerRows;
-        var totalWidth = widths.Sum();
-        var totalHeight = rowHeight * rowCount;
+        var totalRows = jobs.Count + headerRows;
+        var totalCols = columns.Count;
+        var defaultRowHeight = Math.Max(1, settings.DirectoryRowHeight);
+        var textHeight = Math.Max(1, settings.DirectoryTextHeight);
+        var widthFactor = settings.DirectoryTextWidthFactor > 1e-6 ? settings.DirectoryTextWidthFactor : 0.7;
 
         using (document.LockDocument())
         using (var tr = document.Database.TransactionManager.StartTransaction())
         {
             var space = (BlockTableRecord)tr.GetObject(document.Database.CurrentSpaceId, OpenMode.ForWrite);
-            var textStyleId = EnsureTextStyleId(tr, document.Database, settings.DirectoryTextStyleName);
+            var textStyleId = EnsureTextStyleId(tr, document.Database, settings.DirectoryTextStyleName, widthFactor);
             var layerName = EnsureLayer(tr, document.Database, settings.DirectoryLayerName);
 
-            if (settings.DirectoryDrawGridLines)
+            // 参考 TAD：创建原生 Table 实体并初始化
+            var tb = new Table { Position = origin };
+            tb.SetDatabaseDefaults();
+            tb.Layer = layerName;
+
+            if (settings.DirectoryColorIndex > 0 && settings.DirectoryColorIndex <= 256)
             {
-                DrawGrid(space, tr, origin, widths, rowHeight, rowCount, totalWidth, totalHeight, layerName, settings.DirectoryColorIndex);
+                tb.Color = Color.FromColorIndex(ColorMethod.ByAci, (short)settings.DirectoryColorIndex);
             }
 
+            tb.SetSize(totalRows, totalCols);
+            tb.GenerateLayout();
+
+            // 若表格默认带合并单元格，先行尝试取消合并
+            try
+            {
+                if (tb.Cells[0, 0].IsMerged == true)
+                {
+                    tb.UnmergeCells(tb.Cells[0, 0].GetMergeRange());
+                }
+            }
+            catch { }
+
+            // 填充表头数据
             if (settings.DirectoryDrawHeader)
             {
-                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+                for (var col = 0; col < totalCols; col++)
                 {
-                    AddCellText(
-                        space, tr, document.Database, textStyleId, columns[columnIndex].Header,
-                        origin, widths, columnIndex, 0, rowHeight, settings,
-                        columns[columnIndex].Centered, layerName);
+                    var cell = tb.Cells[0, col];
+                    var rawText = ToCadDirectoryText(columns[col].Header);
+                    // 1. 通过 \W{factor}; 格式化标签强制应用宽度因子
+                    cell.TextString = FormatTextWithWidthFactor(rawText, widthFactor);
+                    cell.TextHeight = textHeight;
+                    cell.Alignment = columns[col].Centered ? CellAlignment.MiddleCenter : CellAlignment.MiddleLeft;
+                    if (!textStyleId.IsNull)
+                    {
+                        cell.TextStyleId = textStyleId;
+                    }
                 }
             }
 
-            for (var rowIndex = 0; rowIndex < jobs.Count; rowIndex++)
+            // 填充图纸数据行
+            for (var r = 0; r < jobs.Count; r++)
             {
-                var drawingRow = rowIndex + headerRows;
-                for (var columnIndex = 0; columnIndex < columns.Count; columnIndex++)
+                var tableRow = r + headerRows;
+                for (var col = 0; col < totalCols; col++)
                 {
-                    var column = columns[columnIndex];
-                    var value = GetColumnValue(column.Key, jobs[rowIndex], rowIndex, settings);
-                    AddCellText(
-                        space, tr, document.Database, textStyleId, value,
-                        origin, widths, columnIndex, drawingRow, rowHeight, settings,
-                        column.Centered, layerName);
+                    var column = columns[col];
+                    var value = GetColumnValue(column.Key, jobs[r], r, settings);
+                    var cell = tb.Cells[tableRow, col];
+                    var rawText = ToCadDirectoryText(value);
+
+                    // 1. 通过 \W{factor}; 格式化标签强制应用宽度因子
+                    cell.TextString = FormatTextWithWidthFactor(rawText, widthFactor);
+                    cell.TextHeight = textHeight;
+                    cell.Alignment = column.Centered ? CellAlignment.MiddleCenter : CellAlignment.MiddleLeft;
+                    if (!textStyleId.IsNull)
+                    {
+                        cell.TextStyleId = textStyleId;
+                    }
                 }
             }
+
+            // 统一行高
+            for (var r = 0; r < totalRows; r++)
+            {
+                tb.Rows[r].Height = defaultRowHeight;
+            }
+
+            // 2. 自适应列宽算法（参考 TAD 中的 MText 测算逻辑）
+            var maxColWidths = new double[totalCols];
+            for (var col = 0; col < totalCols; col++)
+            {
+                for (var row = 0; row < totalRows; row++)
+                {
+                    var text = tb.Cells[row, col].TextString;
+                    if (string.IsNullOrEmpty(text)) continue;
+
+                    using (var mt = new MText())
+                    {
+                        mt.Contents = text;
+                        mt.TextHeight = textHeight;
+                        if (!textStyleId.IsNull) mt.TextStyleId = textStyleId;
+                        mt.Width = 0; // 不自动折行
+                        mt.LineSpacingFactor = 1.0;
+
+                        double actW = mt.ActualWidth;
+                        if (actW > maxColWidths[col])
+                        {
+                            maxColWidths[col] = actW;
+                        }
+                    }
+                }
+            }
+
+            // 内外边距设置
+#pragma warning disable 0618
+            try
+            {
+                tb.HorizontalCellMargin = textHeight * 0.2;
+                tb.VerticalCellMargin = textHeight * 0.1;
+            }
+            catch { }
+#pragma warning restore 0618
+
+            // 左右安全 padding（单元格边距外再保留适度余量，防止贴线）
+            double absoluteColPadding = textHeight * 1.5;
+
+            for (var c = 0; c < totalCols; c++)
+            {
+                double autoFitWidth = maxColWidths[c] + absoluteColPadding;
+                // 若设置中有预设列宽，则取预设值与文字自适应所需宽度的较大者，保证装得下
+                double configuredWidth = columns[c].Width;
+                tb.Columns[c].Width = Math.Max(configuredWidth, autoFitWidth);
+            }
+
+            // 如果设置不绘制网格线，隐藏内外网格线
+            if (!settings.DirectoryDrawGridLines)
+            {
+                try
+                {
+                    for (var r = 0; r < totalRows; r++)
+                    {
+                        for (var c = 0; c < totalCols; c++)
+                        {
+                            tb.Cells[r, c].Borders.Top.IsVisible = false;
+                            tb.Cells[r, c].Borders.Bottom.IsVisible = false;
+                            tb.Cells[r, c].Borders.Left.IsVisible = false;
+                            tb.Cells[r, c].Borders.Right.IsVisible = false;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            tb.GenerateLayout();
+            try { tb.RecomputeTableBlock(true); } catch { }
+
+            space.AppendEntity(tb);
+            tr.AddNewlyCreatedDBObject(tb, true);
 
             tr.Commit();
         }
@@ -140,7 +253,6 @@ public static class DirectoryTableGenerator
             return false;
         }
 
-        // 每行“图中交互”只负责当前列宽；目录行高由顶部独立按钮量取，避免两种参数互相覆盖。
         column.Width = width;
         AppSettingsStore.Save(updated);
         message = $"“{column.Header}”列宽已设置为 {width:0.##}。";
@@ -169,18 +281,12 @@ public static class DirectoryTableGenerator
             return false;
         }
 
-        // 高度使用 CAD 两点量距结果，不依赖当前视图方向，适合水平或旋转后的目录模板。
         updated.DirectoryRowHeight = height;
         AppSettingsStore.Save(updated);
         message = $"目录行高已设置为 {height:0.##}。";
         return true;
     }
 
-    /// <summary>
-    /// 在当前活动图纸中点选文字，并把目录绘制所需的五项外观属性写入设置。
-    /// 只保存可跨图纸持久化的值（颜色索引、字高、宽度因子、样式名、图层名），
-    /// 绝不保存实体或文字样式的 ObjectId，避免切换/新建图纸后引用旧数据库对象。
-    /// </summary>
     public static bool PromptTextAppearance(
         Document document,
         AppSettings settings,
@@ -198,7 +304,6 @@ public static class DirectoryTableGenerator
         {
             var options = new PromptEntityOptions("\n点选一段文字作为图纸目录文字样式: ");
             options.SetRejectMessage("\n请选择单行文字、多行文字或属性文字。");
-            // AttributeReference/AttributeDefinition 均继承 DBText；false 表示允许其派生类型。
             options.AddAllowedClass(typeof(DBText), false);
             options.AddAllowedClass(typeof(MText), false);
 
@@ -234,7 +339,6 @@ public static class DirectoryTableGenerator
                     && tr.GetObject(textStyleId, OpenMode.ForRead, false) is TextStyleTableRecord mTextStyle
                     && mTextStyle.XScale > 0)
                 {
-                    // MText 没有独立 WidthFactor，目录使用其文字样式的 XScale 作为对应宽度因子。
                     widthFactor = mTextStyle.XScale;
                 }
             }
@@ -275,7 +379,6 @@ public static class DirectoryTableGenerator
         }
         catch (Exception ex)
         {
-            // 当前图纸可能刚被关闭或切换；只报告失败，不写入半套设置。
             message = "点选目录文字样式失败，请确认当前活动图纸仍然打开：" + ex.Message;
             return false;
         }
@@ -291,13 +394,11 @@ public static class DirectoryTableGenerator
 
     private static string GetColumnValue(string key, PlotJob job, int rowIndex, AppSettings settings)
     {
-        // 这里的字段键与 TitleBlockScanner 写入 PlotJob 的识别结果保持一一对应。
         return key switch
         {
             "Sequence" => (rowIndex + 1).ToString(),
             "DrawingNumber" => job.DrawingNumber,
             "Title" => job.Title,
-            // 仍复用文件名的加长图规范化（分数/小数），写入 CAD 前由 ToCadDirectoryText 把 ∕ 换成普通 /。
             "PaperName" => FileNameSanitizer.NormalizeLongPaperFraction(
                 OutputPaperNameResolver.Resolve(job, settings.LongPaperSnapToleranceMm),
                 settings.LongPaperNameFormat),
@@ -310,145 +411,18 @@ public static class DirectoryTableGenerator
         } ?? "";
     }
 
-    /// <summary>
-    /// 把文件名用的除号斜杠 U+2215 换成普通 "/"。CAD 常用字体不含该字符时会显示为问号。
-    /// 只影响写入图纸目录的文字，不改变 PDF/DWG 等输出文件名。
-    /// </summary>
-    /// <param name="value">目录单元格原始文本。</param>
-    /// <returns>可写入 CAD 文字的文本。</returns>
     private static string ToCadDirectoryText(string value)
     {
         return (value ?? "").Replace('\u2215', '/');
     }
 
-    private static void DrawGrid(
-        BlockTableRecord space,
-        Transaction tr,
-        Point3d origin,
-        IReadOnlyList<double> widths,
-        double rowHeight,
-        int rowCount,
-        double totalWidth,
-        double totalHeight,
-        string layerName,
-        int colorIndex)
+    /// <summary>
+    /// 为文本增加 MText 宽度因子格式控制符，确保单元格严格执行该因子
+    /// </summary>
+    private static string FormatTextWithWidthFactor(string text, double factor)
     {
-        var x = origin.X;
-        AddVerticalLine(space, tr, x, origin.Y, totalHeight, layerName, colorIndex);
-        foreach (var width in widths)
-        {
-            x += width;
-            AddVerticalLine(space, tr, x, origin.Y, totalHeight, layerName, colorIndex);
-        }
-
-        for (var rowIndex = 0; rowIndex <= rowCount; rowIndex++)
-        {
-            var y = origin.Y - rowIndex * rowHeight;
-            AddHorizontalLine(space, tr, origin.X, y, totalWidth, layerName, colorIndex);
-        }
-    }
-
-    private static void AddVerticalLine(
-        BlockTableRecord space,
-        Transaction tr,
-        double x,
-        double topY,
-        double height,
-        string layerName,
-        int colorIndex)
-    {
-        AddLine(space, tr, new Point3d(x, topY, 0), new Point3d(x, topY - height, 0), layerName, colorIndex);
-    }
-
-    private static void AddHorizontalLine(
-        BlockTableRecord space,
-        Transaction tr,
-        double leftX,
-        double y,
-        double width,
-        string layerName,
-        int colorIndex)
-    {
-        AddLine(space, tr, new Point3d(leftX, y, 0), new Point3d(leftX + width, y, 0), layerName, colorIndex);
-    }
-
-    private static void AddLine(
-        BlockTableRecord space,
-        Transaction tr,
-        Point3d start,
-        Point3d end,
-        string layerName,
-        int colorIndex)
-    {
-        var line = new Line(start, end)
-        {
-            Layer = layerName,
-            ColorIndex = colorIndex
-        };
-        space.AppendEntity(line);
-        tr.AddNewlyCreatedDBObject(line, true);
-    }
-
-    private static void AddCellText(
-        BlockTableRecord space,
-        Transaction tr,
-        Database db,
-        ObjectId textStyleId,
-        string text,
-        Point3d origin,
-        IReadOnlyList<double> widths,
-        int column,
-        int row,
-        double rowHeight,
-        AppSettings settings,
-        bool centered,
-        string layerName)
-    {
-        var left = origin.X + widths.Take(column).Sum();
-        var top = origin.Y - row * rowHeight;
-        var width = widths[column];
-        var centerY = top - rowHeight / 2.0;
-        var horizontalPadding = Math.Min(width * 0.05, rowHeight * 0.25);
-        var insertion = centered
-            ? new Point3d(left + width / 2.0, centerY, 0)
-            : new Point3d(left + horizontalPadding, centerY, 0);
-
-        var cadText = ToCadDirectoryText(text);
-        var dbText = new DBText
-        {
-            TextString = cadText,
-            Height = GetTextHeight(cadText, width, rowHeight, settings),
-            WidthFactor = settings.DirectoryTextWidthFactor,
-            Position = insertion,
-            HorizontalMode = centered ? TextHorizontalMode.TextCenter : TextHorizontalMode.TextLeft,
-            VerticalMode = TextVerticalMode.TextVerticalMid,
-            AlignmentPoint = insertion,
-            Layer = layerName,
-            ColorIndex = settings.DirectoryColorIndex
-        };
-        if (!textStyleId.IsNull)
-        {
-            dbText.TextStyleId = textStyleId;
-        }
-
-        space.AppendEntity(dbText);
-        tr.AddNewlyCreatedDBObject(dbText, true);
-        try
-        {
-            dbText.AdjustAlignment(db);
-        }
-        catch
-        {
-        }
-    }
-
-    private static double GetTextHeight(string text, double width, double rowHeight, AppSettings settings)
-    {
-        var configured = Math.Max(1, settings.DirectoryTextHeight);
-        var byRow = rowHeight * 0.8;
-        var charCount = Math.Max(1, (text ?? "").Length);
-        var byWidth = width * 0.9 / Math.Max(1, charCount * settings.DirectoryTextWidthFactor);
-        return Math.Max(1, Math.Min(configured, Math.Min(byRow, byWidth)));
+        if (string.IsNullOrEmpty(text)) return "";
+        return $"\\W{factor:0.##};{text}";
     }
 
     private static string EnsureLayer(Transaction tr, Database db, string? configuredName)
@@ -462,7 +436,6 @@ public static class DirectoryTableGenerator
                 return layerName;
             }
 
-            // 用户输入的新图层在生成目录时自动创建，只影响当前图纸，不修改 CAD 全局设置。
             table.UpgradeOpen();
             var record = new LayerTableRecord { Name = layerName };
             table.Add(record);
@@ -475,7 +448,7 @@ public static class DirectoryTableGenerator
         }
     }
 
-    private static ObjectId EnsureTextStyleId(Transaction tr, Database db, string? textStyleName)
+    private static ObjectId EnsureTextStyleId(Transaction tr, Database db, string? textStyleName, double widthFactor)
     {
         if (string.IsNullOrWhiteSpace(textStyleName))
         {
@@ -496,12 +469,12 @@ public static class DirectoryTableGenerator
                 return ObjectId.Null;
             }
 
-            // 默认”宋体”样式缺失时仅在当前图纸中创建，不修改 CAD 全局模板或用户配置。
             table.UpgradeOpen();
             var record = new TextStyleTableRecord
             {
                 Name = styleName,
-                FileName = "simsun.ttc"
+                FileName = "simsun.ttc",
+                XScale = widthFactor // TextStyle 级别同步设置 XScale
             };
             var id = table.Add(record);
             tr.AddNewlyCreatedDBObject(record, true);
