@@ -1025,6 +1025,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     /// <summary>
     /// 对象扫描：在 CAD 中选择矩形图框候选对象（块/多段线，以及开启四线识别时的直线）。
+    /// 未拾取时右键弹出扫描范围菜单，走与「扫描当前图」相同的范围扫描。
     /// 取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
@@ -1032,16 +1033,39 @@ public sealed partial class RectangleBatchPlotForm : Window
         CadWindowFocus.HideForCadInput(this);
         try
         {
-            var selectedIds = ObjectSelectionPrompt.Prompt(
+            var prompt = ObjectSelectionPrompt.Prompt(
                 _document.Editor,
-                "\n选择要批量打印的矩形图框对象: ",
+                "\n选择要批量打印的矩形图框对象(右键选择扫描范围): ",
                 ObjectSelectionPrompt.RectangleFrameFilter(_settings.RecognizeFourLineRectangleFrames));
-            if (selectedIds == null)
+            if (prompt.Cancelled)
             {
                 return;
             }
 
-            var results = ScanSelectionWithProgress(selectedIds);
+            List<RectangleFrameScanner.Result> results;
+            if (prompt.Scope is { } scope)
+            {
+                results = ScanScopeWithProgress(scope);
+                if (results.Count == 0)
+                {
+                    MessageBox.Show("扫描范围内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                TransformResultsToDcs(results);
+                _lastScanScope = scope;
+                _scanWindow = null;
+                _scanSelectionIds = null;
+                LoadRows(results);
+                return;
+            }
+
+            if (prompt.SelectedIds is not { Length: > 0 } selectedIds)
+            {
+                return;
+            }
+
+            results = ScanSelectionWithProgress(selectedIds);
             if (results.Count == 0)
             {
                 MessageBox.Show("选中对象内没有识别到符合常见纸张比例的矩形框。", Title, MessageBoxButton.OK, MessageBoxImage.Information);

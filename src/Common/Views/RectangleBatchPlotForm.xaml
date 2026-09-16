@@ -59,7 +59,7 @@
                 <Button x:Name="_scanObjectsBtn" Content="对象扫描" MinWidth="92"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ScanSelectedObjects_Click"
-                        ToolTip="回到 CAD 选择对象（可点选或框选），只识别选中对象内的矩形框。" />
+                        ToolTip="回到 CAD 选择对象（可点选或框选）；未拾取时右键可选扫描范围。" />
                 <Button x:Name="_addFilesBtn" Content="多文件批打" MinWidth="108"
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="AddDwgFiles_Click"

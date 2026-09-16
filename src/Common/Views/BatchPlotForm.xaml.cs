@@ -272,6 +272,7 @@ public sealed partial class BatchPlotForm : Window
 
     /// <summary>
     /// 对象扫描：在 CAD 中选择图框块（选择阶段过滤 INSERT），只识别选中对象。
+    /// 未拾取时右键弹出扫描范围菜单，走与「扫描当前图」相同的范围扫描。
     /// 取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
@@ -287,24 +288,39 @@ public sealed partial class BatchPlotForm : Window
         CadWindowFocus.HideForCadInput(this);
         try
         {
-            var selectedIds = ObjectSelectionPrompt.Prompt(
+            var prompt = ObjectSelectionPrompt.Prompt(
                 _currentDocument.Editor,
-                "\n选择要批量打印的图框块对象: ",
+                "\n选择要批量打印的图框块对象(右键选择扫描范围): ",
                 ObjectSelectionPrompt.TitleBlockFilter());
-            if (selectedIds == null)
+            if (prompt.Cancelled)
             {
                 return;
             }
 
-            var scannedJobs = TitleBlockScanner.Scan(
-                _currentDocument,
-                library,
-                selectedIds,
-                _settings.PaperMatchToleranceMm);
-
-            if (scannedJobs.Count == 0)
+            List<PlotJob> scannedJobs;
+            if (prompt.Scope is { } scope)
             {
-                System.Windows.MessageBox.Show("选中对象中未识别到任何图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
+                scannedJobs = TitleBlockScanner.Scan(
+                    _currentDocument,
+                    library,
+                    scope,
+                    _settings.PaperMatchToleranceMm);
+            }
+            else if (prompt.SelectedIds is { Length: > 0 } selectedIds)
+            {
+                scannedJobs = TitleBlockScanner.Scan(
+                    _currentDocument,
+                    library,
+                    selectedIds,
+                    _settings.PaperMatchToleranceMm);
+                if (scannedJobs.Count == 0)
+                {
+                    System.Windows.MessageBox.Show("选中对象中未识别到任何图框。", "批量打印", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+            }
+            else
+            {
                 return;
             }
 
@@ -312,7 +328,11 @@ public sealed partial class BatchPlotForm : Window
             TransformScannedJobsToDcs(scannedJobs);
             SortAndRefreshOutputPaths(scannedJobs);
             ScheduleSequenceOverlayForCurrentJobs();
-            AppendLog("INFO", $"对象扫描当前图完成，识别 {_jobs.Count} 张。");
+            AppendLog(
+                "INFO",
+                prompt.Scope != null
+                    ? $"扫描当前图完成，识别 {_jobs.Count} 张。"
+                    : $"对象扫描当前图完成，识别 {_jobs.Count} 张。");
         }
         finally
         {
