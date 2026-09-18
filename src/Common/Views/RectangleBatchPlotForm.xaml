@@ -66,6 +66,10 @@
                         Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
                         Click="ReloadFrames_Click"
                         ToolTip="按上次扫描方式重新扫描，并刷新矩形框列表。" />
+                <Button x:Name="_clearBtn" Content="清空清单" MinWidth="92"
+                        Style="{StaticResource PluginButtonStyle}" Margin="0,0,3,0"
+                        Click="ClearRows_Click"
+                        ToolTip="清空当前矩形框清单，不影响 CAD 文件。" />
                 <TextBlock Text="右键条目可设为不打印、删除或批量改纸张"
                            Foreground="DimGray" Margin="10,0,0,0" VerticalAlignment="Center" />
             </StackPanel>

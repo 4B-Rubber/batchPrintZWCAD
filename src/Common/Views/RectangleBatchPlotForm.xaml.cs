@@ -193,6 +193,40 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void ReloadFrames_Click(object sender, RoutedEventArgs e) => ReloadFrames();
 
+    private void ClearRows_Click(object sender, RoutedEventArgs e) => ClearRows();
+
+    private void ClearRows()
+    {
+        _grid.CommitEdit(DataGridEditingUnit.Row, true);
+        if (_rows.Count == 0 && _displayRows.Count == 0)
+        {
+            return;
+        }
+
+        if (MessageBox.Show("确定清空当前矩形框清单吗？", Title, MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        ReplaceBindingListContents(_rows, Array.Empty<Row>());
+        ReplaceBindingListContents(_displayRows, Array.Empty<Row>());
+        _scanSelectionIds = null;
+        _lastScanScope = null;
+        _hasAttributeIdentity = false;
+        UpdateAttributeIdentityColumns();
+        _viewSortedByHeader = false;
+        _sortMemberPath = "";
+        try
+        {
+            _overlay.Clear();
+        }
+        catch
+        {
+        }
+    }
+
+
+
     private void BrowseOutputDirectory_Click(object sender, RoutedEventArgs e) => ChooseOutputDirectory();
 
     private void OutputDirectory_TextChanged(object sender, TextChangedEventArgs e)
@@ -485,7 +519,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     // ── 数据加载 ──
 
-    private void LoadRows(IReadOnlyList<RectangleFrameScanner.Result> results)
+    private void LoadRows(IReadOnlyList<RectangleFrameScanner.Result> results, bool append = false)
     {
         var rows = new List<Row>(results.Count);
         foreach (var result in results)
@@ -497,6 +531,21 @@ public sealed partial class RectangleBatchPlotForm : Window
                 Options = result.PaperOptions,
                 PaperChoice = PaperSizeDetector.FormatOption(option)
             });
+        }
+
+        if (append)
+        {
+            var existingKeys = new HashSet<string>(_rows.Select(row => PlotJobIdentityKey(row.Job)), StringComparer.OrdinalIgnoreCase);
+            var merged = _rows.ToList();
+            foreach (var row in rows)
+            {
+                if (existingKeys.Add(PlotJobIdentityKey(row.Job)))
+                {
+                    merged.Add(row);
+                }
+            }
+
+            rows = merged;
         }
 
         _hasAttributeIdentity = rows.Any(row =>
@@ -517,6 +566,16 @@ public sealed partial class RectangleBatchPlotForm : Window
         _viewSortedByHeader = false;
         _sortMemberPath = "";
         SortRows();
+    }
+
+    private static string PlotJobIdentityKey(PlotJob job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.BlockHandle))
+        {
+            return $"H|{job.SourceFile}|{job.SpaceName}|{job.BlockHandle}";
+        }
+
+        return $"G|{job.SourceFile}|{job.SpaceName}|{job.MinX:0.###}|{job.MinY:0.###}|{job.MaxX:0.###}|{job.MaxY:0.###}";
     }
 
     /// <summary>有识别结果时显示图号/图名列，否则保持原有列布局。</summary>
@@ -967,7 +1026,7 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     /// <summary>
     /// 框选扫描：先按类型过滤选择对象，再识别选中矩形图框。
-    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
+    /// 未拾取时右键弹出扫描范围菜单；框选与右键范围结果累加到现有清单（按几何/句柄去重）；取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
     {
@@ -994,9 +1053,9 @@ public sealed partial class RectangleBatchPlotForm : Window
                 }
 
                 TransformResultsToDcs(results);
-                _lastScanScope = scope;
+                _lastScanScope = null;
                 _scanSelectionIds = null;
-                LoadRows(results);
+                LoadRows(results, append: true);
                 return;
             }
 
@@ -1013,9 +1072,24 @@ public sealed partial class RectangleBatchPlotForm : Window
             }
 
             TransformResultsToDcs(results);
-            _scanSelectionIds = selectedIds.ToList();
+            if (_scanSelectionIds == null)
+            {
+                _scanSelectionIds = selectedIds.ToList();
+            }
+            else
+            {
+                var known = new HashSet<ObjectId>(_scanSelectionIds);
+                foreach (var id in selectedIds)
+                {
+                    if (known.Add(id))
+                    {
+                        _scanSelectionIds.Add(id);
+                    }
+                }
+            }
+
             _lastScanScope = null;
-            LoadRows(results);
+            LoadRows(results, append: true);
         }
         catch (OperationCanceledException)
         {

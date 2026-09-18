@@ -418,19 +418,19 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
     }
 
     /// <summary>
-    /// 共享的"选择扫描范围"对话框，供图框块打印和通用型批量打印共用。
-    /// <paramref name="owner"/> 应为批打主窗，关闭后焦点回到批打界面（对齐 main 的 ShowDialog(owner)）。
+    /// 共享「选择扫描范围」对话框，供图框块打印和通用型批量打印共用。
+    /// 四个范围各一个按钮，点击即返回对应范围；关闭窗口即取消。
+    /// <paramref name="owner"/> 应为批打主窗，关闭后焦点回到批打界面。
     /// </summary>
     internal static TitleBlockScanScope? PromptScanScope(Window? owner = null)
     {
-        // main 用 ClientSize 360x220；WPF 的 Height 含标题栏，固定 220 会裁掉底部按钮。
+        TitleBlockScanScope? chosen = null;
         var dialog = new Window
         {
             Title = "扫描当前图",
-            Width = 380,
-            MinWidth = 360,
-            Height = 300,
-            MinHeight = 280,
+            Width = 360,
+            MinWidth = 340,
+            SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
             WindowStartupLocation = owner != null
@@ -441,60 +441,51 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
             FontSize = 11
         };
 
-        var panel = new Grid { Margin = new Thickness(16, 12, 16, 16) };
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(28) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(30) });
-        // 按钮行按内容高度，避免 * 行在矮窗里把确定/取消挤出可视区。
-        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var panel = new StackPanel { Margin = new Thickness(16, 14, 16, 16) };
 
-        void AddToGrid(System.Windows.UIElement element, int row)
+        void AddScopeButton(string content, TitleBlockScanScope scope)
         {
-            Grid.SetRow(element, row);
-            Grid.SetColumn(element, 0);
-            panel.Children.Add(element);
+            var button = new Button
+            {
+                Content = content,
+                MinHeight = 28,
+                Margin = new Thickness(0, 0, 0, 8),
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(12, 4, 12, 4)
+            };
+            try
+            {
+                if (System.Windows.Application.Current?.TryFindResource("PluginButtonStyle") is Style style)
+                {
+                    button.Style = style;
+                }
+            }
+            catch
+            {
+            }
+
+            button.Click += (_, _) =>
+            {
+                chosen = scope;
+                dialog.DialogResult = true;
+                dialog.Close();
+            };
+            panel.Children.Add(button);
         }
 
-        var title = new TextBlock { Text = "选择扫描范围", VerticalAlignment = VerticalAlignment.Center };
-        var all = new RadioButton { Content = "扫描本图全部模型和布局", GroupName = "scope", IsChecked = true, VerticalAlignment = VerticalAlignment.Center };
-        var layouts = new RadioButton { Content = "扫描全部布局", GroupName = "scope", VerticalAlignment = VerticalAlignment.Center };
-        var current = new RadioButton { Content = "扫描当前布局/模型", GroupName = "scope", VerticalAlignment = VerticalAlignment.Center };
-        var model = new RadioButton { Content = "扫描模型空间", GroupName = "scope", VerticalAlignment = VerticalAlignment.Center };
+        AddScopeButton("扫描本图全部模型和布局", TitleBlockScanScope.AllSpaces);
+        AddScopeButton("扫描全部布局", TitleBlockScanScope.PaperLayouts);
+        AddScopeButton("扫描当前布局/模型", TitleBlockScanScope.CurrentSpace);
+        AddScopeButton("扫描模型空间", TitleBlockScanScope.ModelSpace);
 
-        // 按钮右对齐，视觉顺序与原 RightToLeft 布局一致：确定在最右。
-        var buttons = new StackPanel
+        // 最后一项去掉多余底边距
+        if (panel.Children[panel.Children.Count - 1] is FrameworkElement last)
         {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 12, 0, 0)
-        };
-        var ok = new Button { Content = "确定", MinWidth = 76, MinHeight = 26, IsDefault = true, Margin = new Thickness(8, 0, 0, 0) };
-        var cancel = new Button { Content = "取消", MinWidth = 76, MinHeight = 26, IsCancel = true };
-        ok.Click += (_, _) =>
-        {
-            dialog.DialogResult = true;
-            dialog.Close();
-        };
-        cancel.Click += (_, _) =>
-        {
-            dialog.DialogResult = false;
-            dialog.Close();
-        };
-        buttons.Children.Add(cancel);
-        buttons.Children.Add(ok);
+            last.Margin = new Thickness(0);
+        }
 
-        AddToGrid(title, 0);
-        AddToGrid(all, 1);
-        AddToGrid(layouts, 2);
-        AddToGrid(current, 3);
-        AddToGrid(model, 4);
-        AddToGrid(buttons, 5);
         dialog.Content = panel;
 
-        // 嵌套属主弹窗：关闭后焦点回到批打窗，不会像顶层模态那样 ActivateCadWindow。
         var result = CadDialog.ShowModal(dialog, owner);
         owner?.Activate();
         if (result != true)
@@ -502,10 +493,7 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
             return null;
         }
 
-        if (all.IsChecked == true) return TitleBlockScanScope.AllSpaces;
-        if (layouts.IsChecked == true) return TitleBlockScanScope.PaperLayouts;
-        if (current.IsChecked == true) return TitleBlockScanScope.CurrentSpace;
-        return TitleBlockScanScope.ModelSpace;
+        return chosen;
     }
 
     internal static bool TryGetRegion(Editor editor, string firstPrompt, string secondPrompt, Matrix3d inverseBlockTransform, out LocalRectangle region)

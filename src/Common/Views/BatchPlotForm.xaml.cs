@@ -219,7 +219,7 @@ public sealed partial class BatchPlotForm : Window
 
     /// <summary>
     /// 框选扫描：先按类型过滤选择对象，再识别选中图框。
-    /// 未拾取时右键弹出扫描范围菜单；取消选择时保持现有清单不变。
+    /// 未拾取时右键弹出扫描范围菜单；框选与右键范围结果累加到现有清单（按句柄/几何去重）；取消选择时保持现有清单不变。
     /// </summary>
     private void ScanSelectedObjects()
     {
@@ -272,13 +272,16 @@ public sealed partial class BatchPlotForm : Window
 
             _selectedDwgFiles.Clear();
             TransformScannedJobsToDcs(scannedJobs);
-            SortAndRefreshOutputPaths(scannedJobs);
+            var addedCount = CountNewPlotJobs(_jobs, scannedJobs);
+            var mergedJobs = MergePlotJobs(_jobs, scannedJobs);
+            SortAndRefreshOutputPaths(mergedJobs);
             ScheduleSequenceOverlayForCurrentJobs();
             AppendLog(
                 "INFO",
                 prompt.Scope != null
-                    ? $"扫描当前图完成，识别 {_jobs.Count} 张。"
-                    : $"框选扫描当前图完成，识别 {_jobs.Count} 张。");
+                    ? $"范围扫描累加完成，新增 {addedCount} 张，合计 {_jobs.Count} 张。"
+                    : $"框选扫描累加完成，新增 {addedCount} 张，合计 {_jobs.Count} 张。");
+
         }
         finally
         {
@@ -508,6 +511,39 @@ public sealed partial class BatchPlotForm : Window
     /// CAD 红框仅在图号或打印顺序变化时整批重建。
     /// </summary>
     /// <param name="sourceJobs">新清单；为空则对当前表格数据排序后重绑。</param>
+
+    /// <summary>框选/范围扫描累加时按句柄或几何窗口去重，避免同一图框重复入表。</summary>
+    private static string PlotJobIdentityKey(PlotJob job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.BlockHandle))
+        {
+            return $"H|{job.SourceFile}|{job.SpaceName}|{job.BlockHandle}";
+        }
+
+        return $"G|{job.SourceFile}|{job.SpaceName}|{job.MinX:0.###}|{job.MinY:0.###}|{job.MaxX:0.###}|{job.MaxY:0.###}";
+    }
+
+    private static int CountNewPlotJobs(IEnumerable<PlotJob> existing, IEnumerable<PlotJob> incoming)
+    {
+        var keys = new HashSet<string>(existing.Select(PlotJobIdentityKey), StringComparer.OrdinalIgnoreCase);
+        return incoming.Count(job => keys.Add(PlotJobIdentityKey(job)));
+    }
+
+    private static List<PlotJob> MergePlotJobs(IEnumerable<PlotJob> existing, IEnumerable<PlotJob> incoming)
+    {
+        var merged = existing.ToList();
+        var keys = new HashSet<string>(merged.Select(PlotJobIdentityKey), StringComparer.OrdinalIgnoreCase);
+        foreach (var job in incoming)
+        {
+            if (keys.Add(PlotJobIdentityKey(job)))
+            {
+                merged.Add(job);
+            }
+        }
+
+        return merged;
+    }
+
     private void SortAndRefreshOutputPaths(IReadOnlyList<PlotJob>? sourceJobs = null)
     {
         if (!_outputDirectoryIsCustom)
