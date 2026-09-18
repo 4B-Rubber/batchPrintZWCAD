@@ -1695,7 +1695,7 @@ public sealed partial class RectangleBatchPlotForm : Window
                 selected.Count,
                 () => _printCts?.Cancel());
 
-            if (mergePdf)
+            if (mergePdf && !_settings.KeepIndividualPdfsWhenMerging)
             {
                 temporaryDirectory = Path.Combine(Path.GetTempPath(), "ZwcadBatchPlot", "RectangleMerge_" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(temporaryDirectory);
@@ -1895,7 +1895,10 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 result.Job.OutputPath = result.OutputPath;
             }
-            RevealOutput(null, directory);
+                if (_settings.OpenOutputDirectoryAfterBatchPrint)
+            {
+                RevealOutput(null, directory);
+            }
             _status.Text = $"拆图完成，共 {selected.Count} 张";
             MessageBox.Show($"DWG 拆图完成，共 {selected.Count} 张。\n{directory}", Title, MessageBoxButton.OK, MessageBoxImage.Information);
         }

@@ -77,6 +77,9 @@ public sealed class AppSettings
     public bool OpenOutputDirectoryAfterBatchPrint { get; set; } = true;
     /// <summary>PDF 合并成功后，是否用系统默认阅读器打开生成的合并文件。</summary>
     public bool OpenMergedPdfAfterMerge { get; set; } = true;
+    /// <summary>合并 PDF 时，是否在输出目录同时保留每张单独的 PDF。默认关闭。</summary>
+    public bool KeepIndividualPdfsWhenMerging { get; set; }
+
     /// <summary>
     /// 插件是否允许生成日志文件。默认关闭；统一控制打印、拆图、扫描警告和图框录入诊断日志。
     /// </summary>

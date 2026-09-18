@@ -1649,6 +1649,12 @@ public sealed partial class BatchPlotForm : Window
                 "批量拆图",
                 MessageBoxButton.OK,
                 failed == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (success > 0 && _settings.OpenOutputDirectoryAfterBatchPrint)
+            {
+                var firstOk = results.FirstOrDefault(x => x.Error == null)?.OutputPath;
+                OpenOutputDirectoryAfterPrint(firstOk);
+            }
         }
         finally
         {
@@ -2129,7 +2135,7 @@ public sealed partial class BatchPlotForm : Window
 
             var failed = new List<string>();
             PrepareCustomPaperRegistrations(selected, device);
-            if (mergePdf)
+            if (mergePdf && !_settings.KeepIndividualPdfsWhenMerging)
             {
                 temporaryDirectory = CreateTemporaryPdfDirectory("Merge");
                 for (var i = 0; i < selected.Count; i++)

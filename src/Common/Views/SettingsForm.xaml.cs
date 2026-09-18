@@ -1092,6 +1092,7 @@ public sealed partial class SettingsForm : Window
         _addSequenceWhenPdfExists.IsChecked = settings.AddSequenceWhenPdfExists;
         _useFileNameAsPdfBookmark.IsChecked = settings.UseFileNameAsPdfBookmark;
         _mergePdfByPaperSize.IsChecked = settings.MergePdfByPaperSize;
+        _keepIndividualPdfsWhenMerging.IsChecked = settings.KeepIndividualPdfsWhenMerging;
         _openOutputDirectoryAfterBatchPrint.IsChecked = settings.OpenOutputDirectoryAfterBatchPrint;
         _openMergedPdfAfterMerge.IsChecked = settings.OpenMergedPdfAfterMerge;
         _generatePrintLog.IsChecked = settings.GeneratePrintLog;
@@ -1150,6 +1151,7 @@ public sealed partial class SettingsForm : Window
         current.AddSequenceWhenPdfExists = _addSequenceWhenPdfExists.IsChecked == true;
         current.UseFileNameAsPdfBookmark = _useFileNameAsPdfBookmark.IsChecked == true;
         current.MergePdfByPaperSize = _mergePdfByPaperSize.IsChecked == true;
+        current.KeepIndividualPdfsWhenMerging = _keepIndividualPdfsWhenMerging.IsChecked == true;
         current.OpenOutputDirectoryAfterBatchPrint = _openOutputDirectoryAfterBatchPrint.IsChecked == true;
         current.OpenMergedPdfAfterMerge = _openMergedPdfAfterMerge.IsChecked == true;
         current.GeneratePrintLog = _generatePrintLog.IsChecked == true;
