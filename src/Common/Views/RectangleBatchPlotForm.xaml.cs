@@ -8,7 +8,6 @@ using System.Text;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
 #if AUTOCAD
@@ -148,8 +147,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     private bool _hasAttributeIdentity;
     private List<(PlotJob Job, string DrawingNumber)>? _lastOverlayRebuildKey;
     private bool _overlayPainted;
-    /// <summary>多文件批打进列表后禁止 CAD 临时红框/序号，直至再次扫描当前图、框选或清空清单。</summary>
-    private bool _suppressSequenceOverlayFromMultiFile;
 
     public RectangleBatchPlotForm(Document document)
     {
@@ -200,7 +197,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void ClearRows()
     {
-        _suppressSequenceOverlayFromMultiFile = false;
         _grid.CommitEdit(DataGridEditingUnit.Row, true);
         if (_rows.Count == 0 && _displayRows.Count == 0)
         {
@@ -291,37 +287,17 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void GeneralSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsAtTab(0);
 
-        private void Grid_Sorting(object sender, DataGridSortingEventArgs e)
+    private void Grid_Sorting(object sender, DataGridSortingEventArgs e)
     {
-        // 原列头点击排序（Programmatic SortMode）。模板列在部分宿主下不触发本事件，见 PreviewMouse 兜底。
+        // 原列头点击排序（Programmatic SortMode）。
         e.Handled = true;
-        ApplyHeaderSort(e.Column);
-    }
-
-    /// <summary>
-    /// 模板列表头点击兜底：WPF DataGridTemplateColumn 有时不触发 Sorting，点「纸张尺寸 / 比例」会无反应。
-    /// </summary>
-    private bool TryHandleColumnHeaderSortClick(DependencyObject? source)
-    {
-        var header = FindAncestor<DataGridColumnHeader>(source);
-        if (header?.Column == null)
-        {
-            return false;
-        }
-
-        ApplyHeaderSort(header.Column);
-        return true;
-    }
-
-    private void ApplyHeaderSort(DataGridColumn column)
-    {
-        var columnIndex = _grid.Columns.IndexOf(column);
+        var columnIndex = _grid.Columns.IndexOf(e.Column);
         if (columnIndex < 0 || columnIndex >= _grid.Columns.Count)
         {
             return;
         }
 
-        var memberPath = column.SortMemberPath ?? "";
+        var memberPath = e.Column.SortMemberPath ?? "";
         if (_viewSortedByHeader && _sortMemberPath == memberPath)
         {
             _viewSortedByHeader = false;
@@ -344,28 +320,8 @@ public sealed partial class RectangleBatchPlotForm : Window
         {
             _updating = wasUpdating;
         }
-
         UpdateDisplayIndexes();
         UpdateVisuals();
-    }
-
-    private static T? FindAncestor<T>(DependencyObject? source)
-        where T : DependencyObject
-    {
-        var current = source;
-        while (current != null)
-        {
-            if (current is T match)
-            {
-                return match;
-            }
-
-            current = current is System.Windows.Media.Visual || current is System.Windows.Media.Media3D.Visual3D
-                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
-                : LogicalTreeHelper.GetParent(current);
-        }
-
-        return null;
     }
 
     private string GetHeaderSortValue(Row row, string memberPath)
@@ -392,12 +348,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void Grid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (TryHandleColumnHeaderSortClick(e.OriginalSource as DependencyObject))
-        {
-            e.Handled = true;
-            return;
-        }
-
         var row = HitTestRow(e.OriginalSource as DependencyObject)?.Item as Row;
         if (row == null)
         {
@@ -543,7 +493,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 Job = row.Job,
                 DeviceName = device,
-                StyleSheet = PlotStyleManager.ResolveJobStyle(row.Job, SelectedStyle()),
+                StyleSheet = SelectedStyle(),
                 Document = _document,
                 OnFinally = () => CadWindowFocus.RestoreDialog(this),
                 OnError = ex => MessageBox.Show(
@@ -762,7 +712,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void ReloadFrames()
     {
-        _suppressSequenceOverlayFromMultiFile = false;
         try
         {
             List<RectangleFrameScanner.Result> results;
@@ -894,11 +843,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var defaultStyle = SelectedStyle();
-        var picker = new ScanSpacePickerDialog(
-            spaces,
-            defaultStyle,
-            PlotStyleManager.GetAvailableCtbStyles());
+        var picker = new ScanSpacePickerDialog(spaces);
         if (CadDialog.ShowModal(picker, this) != true)
         {
             return;
@@ -970,12 +915,6 @@ public sealed partial class RectangleBatchPlotForm : Window
                         _settings.RecognizeFourLineRectangleFrames);
                 }
 
-                var fileStyle = fileGroup.FirstOrDefault()?.StyleSheet ?? "";
-                foreach (var result in results)
-                {
-                    result.Job.StyleSheet = fileStyle;
-                }
-
                 allResults.AddRange(results);
             }
             catch (Exception ex)
@@ -987,7 +926,6 @@ public sealed partial class RectangleBatchPlotForm : Window
         if (allResults.Count == 0)
         {
             LoadRows(allResults);
-            _suppressSequenceOverlayFromMultiFile = true;
             ClearSequenceOverlay();
             MessageBox.Show(
                 errors.Count > 0
@@ -1000,9 +938,15 @@ public sealed partial class RectangleBatchPlotForm : Window
         }
 
         LoadRows(allResults);
-        // 多文件批打识别结果一律不画临时红框和数字（即使勾选的是当前图）。
-        _suppressSequenceOverlayFromMultiFile = true;
-        ClearSequenceOverlay();
+        // 多文件（含外图）不向当前文档画红框。
+        if (allResults.Any(r => !IsCurrentDocumentSource(r.Job.SourceFile)))
+        {
+            ClearSequenceOverlay();
+        }
+        else
+        {
+            ScheduleOverlayRefresh();
+        }
 
         if (errors.Count > 0)
         {
@@ -1050,7 +994,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     /// </summary>
     private void ScanCurrentDrawing()
     {
-        _suppressSequenceOverlayFromMultiFile = false;
         var scope = PromptScanScope();
         if (scope == null)
         {
@@ -1087,7 +1030,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     /// </summary>
     private void ScanSelectedObjects()
     {
-        _suppressSequenceOverlayFromMultiFile = false;
         CadWindowFocus.HideForCadInput(this);
         try
         {
@@ -1313,10 +1255,9 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void UpdateDisplayIndexes()
     {
-        // 序号始终按真实清单 _rows 顺序，表头临时排序只改显示，不改号（方便同纸张 Shift 多选）。
-        for (var i = 0; i < _rows.Count; i++)
+        for (var i = 0; i < _displayRows.Count; i++)
         {
-            _rows[i].SetNumber(i + 1);
+            _displayRows[i].SetNumber(i + 1);
         }
     }
 
@@ -1403,22 +1344,10 @@ public sealed partial class RectangleBatchPlotForm : Window
     }
 
     /// <summary>候选列表完全一致时：直接套用同一条纸张检测结果。</summary>
-
-    /// <summary>
-    /// 从非模态批打窗弹出子对话框。不要把批打窗设为 Owner：部分 CAD（如中望）会把属主藏掉，
-    /// 看起来像「选择纸张时批打界面消失」。顶层模态结束后再把批打窗拉回前台。
-    /// </summary>
-    private bool? ShowChildModalKeepingListVisible(Window dialog)
-    {
-        var result = CadDialog.ShowModal(dialog);
-        CadWindowFocus.RestoreDialog(this);
-        return result;
-    }
-
     private void ApplyBatchPaperFromSharedOptions(IReadOnlyList<Row> rows, IReadOnlyList<PaperDetection> options)
     {
         var dialog = new SinglePlotPaperSelectionForm(options);
-        if (ShowChildModalKeepingListVisible(dialog) != true)
+        if (CadDialog.ShowModal(dialog) != true)
         {
             return;
         }
@@ -1451,7 +1380,7 @@ public sealed partial class RectangleBatchPlotForm : Window
     private void ApplyBatchPaperByAspectRatioName(IReadOnlyList<Row> rows, IReadOnlyList<PaperDetection> aspectNameOptions)
     {
         var dialog = new SinglePlotPaperSelectionForm(aspectNameOptions);
-        if (ShowChildModalKeepingListVisible(dialog) != true)
+        if (CadDialog.ShowModal(dialog) != true)
         {
             return;
         }
@@ -2162,12 +2091,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     /// </summary>
     private void ScheduleOverlayRefresh()
     {
-        if (_suppressSequenceOverlayFromMultiFile)
-        {
-            ClearSequenceOverlay();
-            return;
-        }
-
         if (!IsLoaded)
         {
             return;
@@ -2455,7 +2378,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             _settings.SortOrderHorizontalFirst,
             showSortBasis: false,
             sortMode: TitleBlockSortMode.Spatial);
-        if (ShowChildModalKeepingListVisible(dialog) != true) return;
+        if (CadDialog.ShowModal(dialog) != true) return;
         _settings.SortOrderHorizontalFirst = dialog.HorizontalFirst;
         AppSettingsStore.Save(_settings);
         SortRows();
