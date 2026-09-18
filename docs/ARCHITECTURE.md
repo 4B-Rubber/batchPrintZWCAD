@@ -603,7 +603,7 @@ SplitMany(jobs, document, settings, ...)
 
 **`ShouldKeepEntity` 判定顺序**：
 
-1. **XCLIP 块**（`TryGetXclipBoundary`）：`XclipFrameHitsPrintRange` — 裁剪多边形与图框打印范围相交即留，不看插入点或未裁剪外包。
+1. **XCLIP 块**（`TryReadXclip`）：只比较**裁剪框**与保留多边形 / UCS 打印矩形（相交或被包含即留）。复制/移动后的参照用 `BlockTransform × OriginalInverseBlockTransform × ClipSpaceToWorld` 把裁剪点变到当前 WCS。存在 `ACAD_FILTER` 但边界读不到时保守保留，不回退到插入点或未裁剪外包。反向 XCLIP 在裁剪框未命中时也保守保留。
 2. **UCS 模型**（`ShouldKeepByUcsRectangle`）：邻框过滤 → 曲线采样/与 UCS 矩形边求交 → 变换后外包与 UCS 矩形相交；失败则保守保留。
 3. **WCS / 布局**：邻框过滤（仅块、闭合多段线；中心在框外、尺寸接近、未伸入内缩 2% 多边形）→ `EntityHitsKeepPolygon`（曲线求交 + 外包与多边形相交）。
 4. **浮动视口**（仅布局）：`ViewportHitsKeepPolygon` — 中心在内，或纸面视口矩形伸入内缩多边形。
