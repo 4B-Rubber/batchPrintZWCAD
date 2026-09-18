@@ -105,7 +105,6 @@
                             <StackPanel>
                                 <CheckBox x:Name="_useFileNameAsPdfBookmark" Content="文件名作为书签" Margin="0,0,0,2" />
                                 <CheckBox x:Name="_mergePdfByPaperSize" Content="按纸张大小合并" Margin="0,0,0,2" />
-                                <CheckBox x:Name="_keepIndividualPdfsWhenMerging" Content="合并时同时保留单个 PDF" Margin="0,0,0,2" />
                                 <TextBlock Foreground="DimGray"
                                            Text="同一纸张尺寸合并到一个 PDF；一批图纸包含多种尺寸时，按尺寸分别生成多个 PDF。" />
                             </StackPanel>
@@ -113,7 +112,7 @@
 
                         <GroupBox Header="完成后操作" Margin="0,0,0,4" Padding="8">
                             <StackPanel>
-                                <CheckBox x:Name="_openOutputDirectoryAfterBatchPrint" Content="批量完成后打开输出文件夹（PNG/JPG/DWF/DWG/PDF；合并 PDF 时除外）" Margin="0,0,0,2" />
+                                <CheckBox x:Name="_openOutputDirectoryAfterBatchPrint" Content="未合并 PDF 时，打开输出文件夹" Margin="0,0,0,2" />
                                 <CheckBox x:Name="_openMergedPdfAfterMerge" Content="PDF 合并完成后，打开该文件" />
                             </StackPanel>
                         </GroupBox>
