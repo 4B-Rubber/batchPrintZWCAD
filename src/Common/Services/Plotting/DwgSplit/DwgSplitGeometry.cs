@@ -178,6 +178,7 @@ internal static class DwgSplitGeometry
 
     /// <summary>
     /// 另存副本后按当前图框去留。UCS 必须用斜矩形，禁止用四角 WCS 包盒。
+    /// 带有效 XCLIP 的块只比较裁剪框与保留区，不回退到插入点或未裁剪外包。
     /// </summary>
     internal static bool ShouldKeepEntity(
         Transaction tr,
@@ -187,9 +188,16 @@ internal static class DwgSplitGeometry
     {
         try
         {
-            if (TryGetXclipBoundary(tr, entity, out var clipPoints, out _))
+            var xclip = TryReadXclip(tr, entity, out var clipPoints, out var inverted);
+            if (xclip == XclipReadResult.Unreadable)
             {
-                return XclipFrameHitsPrintRange(job, clipPoints);
+                result.UnknownExtentsKept++;
+                return true;
+            }
+
+            if (xclip == XclipReadResult.Boundary)
+            {
+                return ShouldKeepXclippedBlock(job, clipPoints, inverted);
             }
 
             if (!job.IsPaperSpace && job.UsesUserCoordinateSystem)
@@ -530,19 +538,16 @@ internal static class DwgSplitGeometry
     {
         var ucs = CreateJobUcsContext(job);
         var worldToUcs = ucs.WorldToUcs;
-        if (TryGetXclipBoundary(tr, entity, out var clipPoints, out var inverted))
+        var xclip = TryReadXclip(tr, entity, out var clipPoints, out var inverted);
+        if (xclip == XclipReadResult.Unreadable)
         {
-            var clipPointsInUcs = clipPoints
-                .Select(point => point.TransformBy(worldToUcs))
-                .ToArray();
-            var entityBoundsInUcs = TryGetTransformedExtents(entity, worldToUcs, out var transformedBounds)
-                ? transformedBounds
-                : GetBounds(clipPointsInUcs);
-            return XclipVisibleRegionIntersects(
-                ucsWindow,
-                entityBoundsInUcs,
-                clipPointsInUcs,
-                inverted);
+            result.UnknownExtentsKept++;
+            return true;
+        }
+
+        if (xclip == XclipReadResult.Boundary)
+        {
+            return ShouldKeepXclippedBlock(job, clipPoints, inverted);
         }
 
         var relation = ClassifyEntityAgainstUcsWindow(tr, entity, worldToUcs, ucsWindow, 0);
@@ -883,7 +888,30 @@ internal static class DwgSplitGeometry
     }
 
     /// <summary>
-    /// XCLIP 块只看裁剪框：裁剪框与图框打印范围相交即保留，不看块插入点或未裁剪外包。
+    /// XCLIP 块只看裁剪框：裁剪框与拆图保留区相交或被包含即保留。
+    /// 不把插入点、未裁剪外包当作保留条件。反向裁剪的可见区在框外，框未命中时仍保守保留。
+    /// </summary>
+    /// <param name="job">拆图任务。</param>
+    /// <param name="clipWorldPoints">裁剪边界的当前世界坐标点。</param>
+    /// <param name="inverted">是否反向 XCLIP。</param>
+    /// <returns>应当保留该块参照时为 true。</returns>
+    private static bool ShouldKeepXclippedBlock(PlotJob job, Point3d[] clipWorldPoints, bool inverted)
+    {
+        if (clipWorldPoints.Length < 2)
+        {
+            return true;
+        }
+
+        if (XclipFrameHitsPrintRange(job, clipWorldPoints))
+        {
+            return true;
+        }
+
+        return inverted;
+    }
+
+    /// <summary>
+    /// 裁剪多边形是否与图框打印范围相交，或一方被另一方包含。
     /// </summary>
     private static bool XclipFrameHitsPrintRange(PlotJob job, Point3d[] clipWorldPoints)
     {
@@ -895,7 +923,7 @@ internal static class DwgSplitGeometry
         if (!job.IsPaperSpace && job.UsesUserCoordinateSystem)
         {
             var worldToUcs = CadSelectionWindow.GetJobUcsToWorld(job).Inverse();
-            var clipInUcs = clipWorldPoints.Select(point => point.TransformBy(worldToUcs)).ToArray();
+            var clipInUcs = clipWorldPoints.Select(point => FlattenZ(point.TransformBy(worldToUcs))).ToArray();
             var ucsRect = new Extents3d(
                 new Point3d(Math.Min(job.UcsMinX, job.UcsMaxX), Math.Min(job.UcsMinY, job.UcsMaxY), 0),
                 new Point3d(Math.Max(job.UcsMinX, job.UcsMaxX), Math.Max(job.UcsMinY, job.UcsMaxY), 0));
@@ -1091,8 +1119,27 @@ internal static class DwgSplitGeometry
             - (end.Y - start.Y) * (point.X - start.X);
     }
 
-    /// <summary>XCLIP 边界的实际世界点，供 UCS 下按扫描四点法变换，不先取 WCS 包盒。</summary>
-    private static bool TryGetXclipBoundary(
+    /// <summary>块参照上 XCLIP / ACAD_FILTER 的读取结果。</summary>
+    private enum XclipReadResult
+    {
+        /// <summary>没有启用中的空间裁剪，按普通实体去留。</summary>
+        None,
+        /// <summary>已得到当前 WCS 下的裁剪边界。</summary>
+        Boundary,
+        /// <summary>存在 ACAD_FILTER 但边界不可靠，应保守保留。</summary>
+        Unreadable
+    }
+
+    /// <summary>
+    /// 读取块参照的 XCLIP 边界（当前 WCS）。复制或移动后的参照不能只用
+    /// <c>ClipSpaceToWorldCoordinateSystemTransform</c>，否则点会停在裁剪时的原位。
+    /// </summary>
+    /// <param name="tr">当前事务。</param>
+    /// <param name="entity">待判定实体。</param>
+    /// <param name="worldPoints">成功时为裁剪多边形的世界坐标。</param>
+    /// <param name="inverted">是否反向裁剪。</param>
+    /// <returns>无裁剪、已读到边界、或边界不可靠。</returns>
+    private static XclipReadResult TryReadXclip(
         Transaction tr,
         Entity entity,
         out Point3d[] worldPoints,
@@ -1102,32 +1149,34 @@ internal static class DwgSplitGeometry
         inverted = false;
         if (entity is not BlockReference blockRef || blockRef.ExtensionDictionary.IsNull)
         {
-            return false;
+            return XclipReadResult.None;
         }
 
+        var sawFilter = false;
         try
         {
             if (tr.GetObject(blockRef.ExtensionDictionary, OpenMode.ForRead, false) is not DBDictionary extDict
                 || !extDict.Contains("ACAD_FILTER"))
             {
-                return false;
+                return XclipReadResult.None;
             }
 
+            sawFilter = true;
             if (tr.GetObject(extDict.GetAt("ACAD_FILTER"), OpenMode.ForRead, false) is not DBDictionary filterDict
                 || !filterDict.Contains("SPATIAL"))
             {
-                return false;
+                return XclipReadResult.Unreadable;
             }
 
             if (tr.GetObject(filterDict.GetAt("SPATIAL"), OpenMode.ForRead, false) is not SpatialFilter filter)
             {
-                return false;
+                return XclipReadResult.Unreadable;
             }
 
             var definition = filter.Definition;
             if (!definition.Enabled)
             {
-                return false;
+                return XclipReadResult.None;
             }
 
 #if AUTOCAD && !ACAD_CORE
@@ -1138,49 +1187,137 @@ internal static class DwgSplitGeometry
 #endif
 
             var points = definition.GetPoints();
-            // SDK 明确定义该矩阵用于把裁剪边界坐标直接变到 WCS。
-            var toWorld = filter.ClipSpaceToWorldCoordinateSystemTransform;
-            if (points != null && points.Count >= 2)
+            if (points == null || points.Count < 2)
             {
-                var localPoints = new List<Point3d>();
-                if (points.Count == 2)
-                {
-                    // 两点矩形必须先在裁剪坐标系补齐四角，再做旋转/镜像变换。
-                    var minX = Math.Min(points[0].X, points[1].X);
-                    var minY = Math.Min(points[0].Y, points[1].Y);
-                    var maxX = Math.Max(points[0].X, points[1].X);
-                    var maxY = Math.Max(points[0].Y, points[1].Y);
-                    localPoints.Add(new Point3d(minX, minY, 0));
-                    localPoints.Add(new Point3d(minX, maxY, 0));
-                    localPoints.Add(new Point3d(maxX, maxY, 0));
-                    localPoints.Add(new Point3d(maxX, minY, 0));
-                }
-                else
-                {
-                    for (var i = 0; i < points.Count; i++)
-                    {
-                        localPoints.Add(new Point3d(points[i].X, points[i].Y, 0));
-                    }
-                }
-
-                worldPoints = localPoints.Select(point => point.TransformBy(toWorld)).ToArray();
-                return true;
+                return XclipReadResult.Unreadable;
             }
 
-            var queryBounds = filter.GetQueryBounds();
-            worldPoints = new[]
+            var localPoints = ExpandClipDefinitionPoints(points);
+            if (!TryTransformClipPointsToWorld(localPoints, filter, blockRef, out worldPoints))
             {
-                new Point3d(queryBounds.MinPoint.X, queryBounds.MinPoint.Y, 0).TransformBy(toWorld),
-                new Point3d(queryBounds.MinPoint.X, queryBounds.MaxPoint.Y, 0).TransformBy(toWorld),
-                new Point3d(queryBounds.MaxPoint.X, queryBounds.MaxPoint.Y, 0).TransformBy(toWorld),
-                new Point3d(queryBounds.MaxPoint.X, queryBounds.MinPoint.Y, 0).TransformBy(toWorld)
-            };
-            return true;
+                return XclipReadResult.Unreadable;
+            }
+
+            return XclipReadResult.Boundary;
         }
         catch
         {
-            return false;
+            return sawFilter ? XclipReadResult.Unreadable : XclipReadResult.None;
         }
+    }
+
+    /// <summary>
+    /// 两点矩形先在裁剪坐标系补齐四角，再做旋转/镜像；多边形顶点保持原序。
+    /// </summary>
+    /// <param name="points">SpatialFilter 定义点（裁剪局部坐标）。</param>
+    /// <returns>待变换到 WCS 的局部点。</returns>
+    private static List<Point3d> ExpandClipDefinitionPoints(Point2dCollection points)
+    {
+        var localPoints = new List<Point3d>();
+        if (points.Count == 2)
+        {
+            var minX = Math.Min(points[0].X, points[1].X);
+            var minY = Math.Min(points[0].Y, points[1].Y);
+            var maxX = Math.Max(points[0].X, points[1].X);
+            var maxY = Math.Max(points[0].Y, points[1].Y);
+            localPoints.Add(new Point3d(minX, minY, 0));
+            localPoints.Add(new Point3d(minX, maxY, 0));
+            localPoints.Add(new Point3d(maxX, maxY, 0));
+            localPoints.Add(new Point3d(maxX, minY, 0));
+            return localPoints;
+        }
+
+        for (var i = 0; i < points.Count; i++)
+        {
+            localPoints.Add(new Point3d(points[i].X, points[i].Y, 0));
+        }
+
+        return localPoints;
+    }
+
+    /// <summary>
+    /// 把裁剪定义点变到当前块参照的 WCS。
+    /// 优先 <c>BlockTransform × OriginalInverse × ClipSpaceToWorld</c>（复制/移动后仍正确）；
+    /// 若结果与当前外包不相交，再试 ClipSpaceToWorld 或 BlockTransform。
+    /// 候选全部不可靠时返回 false，由调用方保守保留。
+    /// </summary>
+    /// <param name="localPoints">裁剪坐标系下的边界点。</param>
+    /// <param name="filter">空间过滤器。</param>
+    /// <param name="blockRef">当前块参照。</param>
+    /// <param name="worldPoints">当前 WCS 下的裁剪点。</param>
+    /// <returns>得到可信世界坐标时为 true。</returns>
+    private static bool TryTransformClipPointsToWorld(
+        List<Point3d> localPoints,
+        SpatialFilter filter,
+        BlockReference blockRef,
+        out Point3d[] worldPoints)
+    {
+        worldPoints = Array.Empty<Point3d>();
+        var matrices = new List<Matrix3d>();
+        try
+        {
+            // 每次从属性重新取值，避免 PreMultiplyBy 改写本地结构体副本后污染后续候选。
+            matrices.Add(filter.ClipSpaceToWorldCoordinateSystemTransform
+                .PreMultiplyBy(filter.OriginalInverseBlockTransform)
+                .PreMultiplyBy(blockRef.BlockTransform));
+        }
+        catch
+        {
+            // 再试其余候选。
+        }
+
+        try
+        {
+            matrices.Add(filter.ClipSpaceToWorldCoordinateSystemTransform);
+        }
+        catch
+        {
+            // ClipSpaceToWorld 不可用时仍可尝试块变换。
+        }
+
+        try
+        {
+            matrices.Add(blockRef.BlockTransform);
+        }
+        catch
+        {
+            // 无块变换时只使用已收集的候选。
+        }
+
+        var extentsAvailable = false;
+        Extents3d extents = default;
+        try
+        {
+            extents = blockRef.GeometricExtents;
+            extentsAvailable = true;
+        }
+        catch
+        {
+            // 无外包时采用第一个能变换出的候选。
+        }
+
+        foreach (var matrix in matrices)
+        {
+            var world = localPoints.Select(point => FlattenZ(point.TransformBy(matrix))).ToArray();
+            if (world.Length < 2)
+            {
+                continue;
+            }
+
+            if (!extentsAvailable || Intersects(GetBounds(world), extents))
+            {
+                worldPoints = world;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>去留只比较 XY，去掉裁剪平面变换带来的 Z。</summary>
+    private static Point3d FlattenZ(Point3d point)
+    {
+        return new Point3d(point.X, point.Y, 0);
     }
 
     private static bool Intersects(Extents3d a, Extents3d b)
