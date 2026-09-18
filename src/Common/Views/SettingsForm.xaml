@@ -112,7 +112,7 @@
 
                         <GroupBox Header="完成后操作" Margin="0,0,0,4" Padding="8">
                             <StackPanel>
-                                <CheckBox x:Name="_openOutputDirectoryAfterBatchPrint" Content="批量打印单张后，打开所在文件夹" Margin="0,0,0,2" />
+                                <CheckBox x:Name="_openOutputDirectoryAfterBatchPrint" Content="未合并 PDF 时，打开输出文件夹" Margin="0,0,0,2" />
                                 <CheckBox x:Name="_openMergedPdfAfterMerge" Content="PDF 合并完成后，打开该文件" />
                             </StackPanel>
                         </GroupBox>
