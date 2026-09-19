@@ -146,6 +146,7 @@
                   AutoGenerateColumns="False"
                   SelectionMode="Extended" SelectionUnit="FullRow"
                   HeadersVisibility="Column"
+                  CanUserSortColumns="True"
                   GridLinesVisibility="Horizontal"
                   Sorting="Grid_Sorting"
                   ContextMenuOpening="Grid_ContextMenuOpening"
@@ -167,14 +168,14 @@
                 </Style>
             </DataGrid.RowStyle>
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="编号" Width="52" IsReadOnly="True" SortMemberPath="Number">
+                <DataGridTemplateColumn Header="编号" Width="52" IsReadOnly="True" SortMemberPath="Number" CanUserSort="True">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding Number}" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="预览" Width="62" SortMemberPath="Number">
+                <DataGridTemplateColumn Header="预览" Width="62" SortMemberPath="Number" CanUserSort="True">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <Button Content="预览" Padding="6,0" MinHeight="20"
@@ -182,7 +183,7 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="打印" Width="62" SortMemberPath="Selected">
+                <DataGridTemplateColumn Header="打印" Width="62" SortMemberPath="Selected" CanUserSort="True">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <CheckBox HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -204,7 +205,7 @@
                 <DataGridTextColumn Header="文件名" Binding="{Binding FileName}"
                                     Width="*" MinWidth="170" IsReadOnly="True"
                                     SortMemberPath="FileName" />
-                <DataGridTemplateColumn Header="纸张尺寸 / 比例" Width="*" MinWidth="200" SortMemberPath="PaperChoice">
+                <DataGridTemplateColumn Header="纸张尺寸 / 比例" Width="*" MinWidth="200" SortMemberPath="PaperChoice" CanUserSort="True">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <ComboBox ItemsSource="{Binding PaperOptions}"

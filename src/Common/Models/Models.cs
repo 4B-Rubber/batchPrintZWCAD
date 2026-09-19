@@ -167,6 +167,8 @@ public sealed class PlotJob
     public bool DetectedRequiresCustomPaperRegistration { get; set; }
     /// <summary>本次输出是否必须把纸张按实测宽高注册到当前 PDF/DWF 绘图器 PMP。</summary>
     public bool RequiresCustomPaperRegistration { get; set; }
+    /// <summary>本作业打印样式（CTB）；空则使用批打窗体当前选择的样式。</summary>
+    public string StyleSheet { get; set; } = "";
     /// <summary>打印区域 4 个实际 WCS 角点，格式 [x0,y0,x1,y1,x2,y2,x3,y3]。null 时用 Min/Max。</summary>
     public double[]? CornerPoints { get; set; }
 }

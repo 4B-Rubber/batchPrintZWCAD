@@ -231,6 +231,50 @@ public sealed partial class TitleBlockLibraryManagerForm : Window
         EditSelectedDefinition();
     }
 
+    private void OnAddTitleBlockClick(object sender, RoutedEventArgs e)
+    {
+        AddTitleBlockDefinition();
+    }
+
+    private void AddTitleBlockDefinition()
+    {
+        CommitEdit();
+
+        // 与右键编辑一致：未保存修改先落盘，再藏窗跑 CAD 交互入库流程。
+        if (_dirty)
+        {
+            var saveFirst = System.Windows.MessageBox.Show(
+                "当前有未保存的修改。新增图框前需要先保存，是否继续？",
+                Title,
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+            if (saveFirst != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            SaveRows();
+            if (_dirty)
+            {
+                return;
+            }
+        }
+
+        CadWindowFocus.HideForCadInput(this);
+        try
+        {
+            if (BatchPlotCommands.AddTitleBlockFromLibrary())
+            {
+                LibraryChanged = true;
+                LoadRows();
+            }
+        }
+        finally
+        {
+            CadWindowFocus.RestoreDialog(this);
+        }
+    }
+
     private static T? FindAncestor<T>(DependencyObject source)
         where T : DependencyObject
     {

@@ -21,6 +21,9 @@ public sealed class DwgSpaceEntry
     public string DisplayName => IsModelSpace ? "模型" : LayoutName;
 
     public bool Selected { get; set; } = true;
+
+    /// <summary>该文件选用的打印样式（CTB）；空则回退主窗体当前样式。</summary>
+    public string StyleSheet { get; set; } = "";
 }
 
 /// <summary>不打开文档，侧载枚举 DWG 内模型与布局。</summary>

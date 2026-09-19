@@ -27,6 +27,8 @@
                       HorizontalScrollBarVisibility="Auto"
                       VerticalScrollBarVisibility="Disabled">
             <StackPanel Orientation="Horizontal" Margin="8,5,8,4">
+                <Button Content="新增图框" MinWidth="96" Margin="0,0,4,0"
+                        Style="{StaticResource PluginButtonStyle}" Click="OnAddTitleBlockClick" />
                 <Button x:Name="_saveButton" Content="保存修改" MinWidth="96" Margin="0,0,4,0"
                         Style="{StaticResource PluginButtonStyle}" Click="OnSaveClick" />
                 <Button Content="删除选中" MinWidth="96" Margin="0,0,4,0"

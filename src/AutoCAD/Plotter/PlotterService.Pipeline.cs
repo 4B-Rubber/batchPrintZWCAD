@@ -47,6 +47,8 @@ public static partial class PlotterService
 
         WaitForPlotIdle();
 
+        styleSheet = PlotStyleManager.ResolveJobStyle(job, styleSheet);
+
         var oldDatabase = HostApplicationServices.WorkingDatabase;
         HostApplicationServices.WorkingDatabase = db;
         try
@@ -358,6 +360,8 @@ public static partial class PlotterService
     private static void PreviewDatabase(Database db, string documentName, PlotJob job, string deviceName, string styleSheet, Document plotDocument)
     {
         WaitForPlotIdle();
+
+        styleSheet = PlotStyleManager.ResolveJobStyle(job, styleSheet);
 
         var oldDatabase = HostApplicationServices.WorkingDatabase;
         HostApplicationServices.WorkingDatabase = db;

@@ -58,6 +58,20 @@ internal static class PlotStyleManager
     }
 
     /// <summary>
+    /// 解析作业实际使用的打印样式：作业自带 StyleSheet 时优先，否则回退 fallback（通常为主窗体当前样式）。
+    /// </summary>
+    public static string ResolveJobStyle(PlotJob? job, string? fallback)
+    {
+        if (job != null && !string.IsNullOrWhiteSpace(job.StyleSheet))
+        {
+            return NormalizeStyleName(job.StyleSheet);
+        }
+
+        return NormalizeStyleName(fallback);
+    }
+
+
+    /// <summary>
     /// 判断两个打印样式是否为同一份 CTB，忽略路径、扩展名和大小写。
     /// </summary>
     public static bool StyleNamesEqual(string? left, string? right)

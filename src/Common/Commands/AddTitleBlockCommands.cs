@@ -24,13 +24,18 @@ namespace ZwcadBatchPlot;
 
 public sealed partial class BatchPlotCommands
 {
-    private static void AddTitleBlockCore()
+    /// <summary>
+    /// 从图框信息库界面触发新增，流程与菜单「新增图框」相同。
+    /// </summary>
+    internal static bool AddTitleBlockFromLibrary() => AddTitleBlockCore();
+
+    private static bool AddTitleBlockCore()
     {
         var doc = CadApp.DocumentManager.MdiActiveDocument;
         if (doc == null)
         {
             AddBlockLog("No active document.");
-            return;
+            return false;
         }
 
         var editor = doc.Editor;
@@ -40,7 +45,7 @@ public sealed partial class BatchPlotCommands
         {
             MessageBox.Show("新增图框前请先将 UCS 切换为世界坐标系（WCS）。\n命令行输入 UCS 然后回车即可。",
                 "批量打印", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            return false;
         }
 
         AddBlockLog("Add title block command started.");
@@ -56,7 +61,7 @@ public sealed partial class BatchPlotCommands
             AddBlockLog("Block prompt status: " + blockResult.Status);
             if (blockResult.Status != PromptStatus.OK)
             {
-                return;
+                return false;
             }
 
             string blockName;
@@ -145,7 +150,7 @@ public sealed partial class BatchPlotCommands
                 {
                     AddBlockLog("Duplicate block name; user chose not to overwrite.");
                     editor.WriteMessage($"\n已取消录入，图框库中的 {blockName} 保持不变。");
-                    return;
+                    return false;
                 }
             }
 
@@ -188,7 +193,7 @@ public sealed partial class BatchPlotCommands
                         out var manualFrame))
                 {
                     AddBlockLog("Required print boundary selection cancelled.");
-                    return;
+                    return false;
                 }
 
                 referenceFrame = manualFrame;
@@ -253,7 +258,7 @@ public sealed partial class BatchPlotCommands
                 if (ShowModalDialog(fieldDialog) != System.Windows.Forms.DialogResult.OK)
                 {
                     AddBlockLog("Field selection cancelled.");
-                    return;
+                    return false;
                 }
 
                 titleRegion = fieldDialog.TitleRegion;
@@ -340,12 +345,14 @@ public sealed partial class BatchPlotCommands
                 "批量打印",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
+            return true;
         }
         catch (System.Exception ex)
         {
             AddBlockLog("Failed: " + ex);
             editor.WriteMessage("\n新增图框失败: " + ex.Message);
             MessageBox.Show("新增图框失败: " + ex.Message, "批量打印", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
     }
 

@@ -45,6 +45,8 @@ public sealed partial class BatchPlotForm : Window
     private readonly TemporarySequenceOverlay _sequenceOverlay;
     private readonly AppSettings _settings;
     private bool _sequenceOverlayFollowsCurrentJobs;
+    /// <summary>多文件批打进列表后禁止 CAD 临时红框/序号，直至再次扫描当前图或框选。</summary>
+    private bool _suppressSequenceOverlayFromMultiFile;
     private int _overlayScheduleGeneration;
     private bool _outputDirectoryIsCustom;
     private bool _outputDirectoryModified;
@@ -188,6 +190,7 @@ public sealed partial class BatchPlotForm : Window
 
     private void ScanCurrentDrawing()
     {
+        _suppressSequenceOverlayFromMultiFile = false;
         var library = TitleBlockLibraryStore.Load();
         if (library.Blocks.Count == 0)
         {
@@ -223,6 +226,7 @@ public sealed partial class BatchPlotForm : Window
     /// </summary>
     private void ScanSelectedObjects()
     {
+        _suppressSequenceOverlayFromMultiFile = false;
         var library = TitleBlockLibraryStore.Load();
         if (library.Blocks.Count == 0)
         {
@@ -396,7 +400,11 @@ public sealed partial class BatchPlotForm : Window
             return;
         }
 
-        var picker = new ScanSpacePickerDialog(spaces);
+        var defaultStyle = _styleCombo.SelectedItem?.ToString() ?? "";
+        var picker = new ScanSpacePickerDialog(
+            spaces,
+            defaultStyle,
+            PlotStyleManager.GetAvailableCtbStyles());
         if (CadDialog.ShowModal(picker, this) != true)
         {
             return;
@@ -430,7 +438,13 @@ public sealed partial class BatchPlotForm : Window
                 StringComparer.OrdinalIgnoreCase);
             try
             {
+                var fileStyle = fileGroup.FirstOrDefault()?.StyleSheet ?? "";
                 var scanned = ScanExternalFile(file, library, allowed);
+                foreach (var job in scanned)
+                {
+                    job.StyleSheet = fileStyle;
+                }
+
                 added.AddRange(scanned);
                 AppendLog("INFO", $"扫描 {file}（{allowed.Count} 个空间），识别 {scanned.Count} 张。");
             }
@@ -443,14 +457,9 @@ public sealed partial class BatchPlotForm : Window
         }
 
         SortAndRefreshOutputPaths(added);
-        if (_jobs.Count > 0 && _jobs.All(IsCurrentDocumentJob))
-        {
-            ScheduleSequenceOverlayForCurrentJobs();
-        }
-        else
-        {
-            ClearSequenceOverlay();
-        }
+        // 多文件批打识别结果一律不画临时红框和数字（即使勾选的是当前图）。
+        _suppressSequenceOverlayFromMultiFile = true;
+        ClearSequenceOverlay();
 
         if (errors.Count > 0)
         {
@@ -1022,6 +1031,12 @@ public sealed partial class BatchPlotForm : Window
     /// </summary>
     private void ScheduleSequenceOverlayForCurrentJobs()
     {
+        if (_suppressSequenceOverlayFromMultiFile)
+        {
+            ClearSequenceOverlay();
+            return;
+        }
+
         if (_closed)
         {
             return;
@@ -1445,6 +1460,7 @@ public sealed partial class BatchPlotForm : Window
 
     private void ClearJobs()
     {
+        _suppressSequenceOverlayFromMultiFile = false;
         _grid.CommitEdit(DataGridEditingUnit.Row, true);
         if (_jobs.Count == 0)
         {
@@ -2400,7 +2416,7 @@ public sealed partial class BatchPlotForm : Window
     {
         // 预览必须使用当前输出格式对应的绘图器，确保纸张、旋转和实际输出效果一致。
         var device = SelectedPlotDevice;
-        var style = _styleCombo.SelectedItem?.ToString() ?? "";
+        var style = PlotStyleManager.ResolveJobStyle(job, _styleCombo.SelectedItem?.ToString() ?? "");
         if (string.IsNullOrWhiteSpace(device))
         {
             System.Windows.MessageBox.Show("请选择打印机。", "打印预览", MessageBoxButton.OK, MessageBoxImage.Warning);

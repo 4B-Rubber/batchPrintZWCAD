@@ -18,6 +18,7 @@ public sealed partial class ScanSpacePickerDialog : Window
     {
         public string FilePath { get; set; } = "";
         public CheckBox HeaderCheck { get; set; } = null!;
+        public ComboBox StyleCombo { get; set; } = null!;
         public List<SpaceRow> Rows { get; } = new();
         public bool SuppressHeaderSync;
         public bool SuppressChildSync;
@@ -36,9 +37,32 @@ public sealed partial class ScanSpacePickerDialog : Window
     /// <summary>用户勾选并确认开始扫描的空间。</summary>
     public IReadOnlyList<DwgSpaceEntry> SelectedSpaces => _selected;
 
-    public ScanSpacePickerDialog(IEnumerable<DwgSpaceEntry> spaces)
+    private readonly string _defaultStyleSheet;
+    private readonly List<string> _availableStyles;
+
+    public ScanSpacePickerDialog(
+        IEnumerable<DwgSpaceEntry> spaces,
+        string defaultStyleSheet,
+        IEnumerable<string>? availableStyles = null)
     {
         InitializeComponent();
+        _defaultStyleSheet = defaultStyleSheet ?? "";
+        _availableStyles = (availableStyles ?? Array.Empty<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (_availableStyles.Count == 0)
+        {
+            try
+            {
+                _availableStyles = PlotStyleManager.GetAvailableCtbStyles().ToList();
+            }
+            catch
+            {
+                _availableStyles = new List<string>();
+            }
+        }
+
         BuildContent(spaces?.ToList() ?? new List<DwgSpaceEntry>());
     }
 
@@ -131,11 +155,43 @@ public sealed partial class ScanSpacePickerDialog : Window
         foreach (var fileGroup in spaces.GroupBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase))
         {
             var group = new FileGroup { FilePath = fileGroup.Key };
+            var headerRow = new DockPanel
+            {
+                Margin = new Thickness(2, 4, 2, 2),
+                LastChildFill = true
+            };
+
+            var styleCombo = new ComboBox
+            {
+                Width = 168,
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "打印样式"
+            };
+            foreach (var style in _availableStyles)
+            {
+                styleCombo.Items.Add(style);
+            }
+
+            PlotStyleManager.RestoreSavedStyle(styleCombo, _defaultStyleSheet);
+            group.StyleCombo = styleCombo;
+
+            var styleLabel = new TextBlock
+            {
+                Text = "打印样式",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 0, 0),
+                Foreground = Brushes.DimGray
+            };
+            DockPanel.SetDock(styleCombo, Dock.Right);
+            DockPanel.SetDock(styleLabel, Dock.Right);
+            headerRow.Children.Add(styleCombo);
+            headerRow.Children.Add(styleLabel);
+
             var header = new CheckBox
             {
                 Content = Path.GetFileName(fileGroup.Key),
                 IsThreeState = true,
-                Margin = new Thickness(2, 4, 2, 2),
                 VerticalContentAlignment = VerticalAlignment.Center,
                 FontWeight = FontWeights.SemiBold,
                 ToolTip = fileGroup.Key
@@ -153,7 +209,8 @@ public sealed partial class ScanSpacePickerDialog : Window
 
                 header.IsChecked = true;
             };
-            stack.Children.Add(header);
+            headerRow.Children.Add(header);
+            stack.Children.Add(headerRow);
 
             foreach (var entry in fileGroup)
             {
@@ -267,9 +324,12 @@ public sealed partial class ScanSpacePickerDialog : Window
         _selected.Clear();
         foreach (var group in _groups)
         {
+            var style = group.StyleCombo.SelectedItem?.ToString()
+                ?? PlotStyleManager.NormalizeStyleName(_defaultStyleSheet);
             foreach (var row in group.Rows)
             {
                 row.Entry.Selected = row.Check.IsChecked == true;
+                row.Entry.StyleSheet = style;
                 if (row.Entry.Selected)
                 {
                     _selected.Add(row.Entry);
