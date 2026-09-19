@@ -156,7 +156,7 @@ public sealed partial class BatchPlotCommands
 
             editor.WriteMessage($"\n已定位图框 {existing.BlockName}，红色临时框显示当前已配置字段，可点击对应‘框选’修改。");
             CadWindowFocus.ActivateCadWindow();
-            if (ShowModalDialog(dialog) != System.Windows.Forms.DialogResult.OK)
+            if (ShowModelessDialogAndWait(dialog) != System.Windows.Forms.DialogResult.OK)
             {
                 return false;
             }
@@ -297,20 +297,12 @@ public sealed partial class BatchPlotCommands
 
         if (mode == EditCoordinateMode.Frame)
         {
-            return LocalRectangle.FromPoints(
-                storedRegion.MinX + referenceFrame.MinX,
-                storedRegion.MinY + referenceFrame.MinY,
-                storedRegion.MaxX + referenceFrame.MinX,
-                storedRegion.MaxY + referenceFrame.MinY);
+            return TitleBlockRegionConverter.FromFrameRelative(storedRegion, referenceFrame);
         }
 
         if (mode == EditCoordinateMode.FrameRightBottomDynamic)
         {
-            return LocalRectangle.FromPoints(
-                storedRegion.MinX + referenceFrame.MaxX,
-                storedRegion.MinY + referenceFrame.MinY,
-                storedRegion.MaxX + referenceFrame.MaxX,
-                storedRegion.MaxY + referenceFrame.MinY);
+            return TitleBlockRegionConverter.FromFrameRightBottomRelative(storedRegion, referenceFrame);
         }
 
         return mode == EditCoordinateMode.World

@@ -255,7 +255,7 @@ public sealed partial class BatchPlotCommands
                        paperOptions,
                        paperDetectionOptions))
             {
-                if (ShowModalDialog(fieldDialog) != System.Windows.Forms.DialogResult.OK)
+                if (ShowModelessDialogAndWait(fieldDialog) != System.Windows.Forms.DialogResult.OK)
                 {
                     AddBlockLog("Field selection cancelled.");
                     return false;

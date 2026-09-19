@@ -72,6 +72,12 @@ public sealed class FieldBoxSelectDialog : Form
     private readonly PaperSizeDetector.DetectionOptions _paperDetectionOptions;
     private IReadOnlyList<PaperDetection> _paperOptions = Array.Empty<PaperDetection>();
 
+    // 「套用已有图框」：仅列出与当前识别纸张尺寸兼容的库条目。
+    private readonly ComboBox _libraryTemplateCombo = new();
+    private readonly Label _libraryTemplateHint = new();
+    private List<TitleBlockDefinition> _compatibleLibraryEntries = new();
+    private bool _applyingLibraryTemplate;
+
     private PaperDetection? SelectedPaper =>
         _paperName.SelectedIndex >= 0 && _paperName.SelectedIndex < _paperOptions.Count
             ? _paperOptions[_paperName.SelectedIndex]
@@ -102,11 +108,13 @@ public sealed class FieldBoxSelectDialog : Form
             new Point3d(worldFrame.MaxX, worldFrame.MaxY, 0));
 
         Text = "设置图框字段与纸张";
-        UiLayout.ConfigureForm(this, 460, 436, 430, 410);
-        // 打印范围、纸张各一行，纵向多两行。
-        ClientSize = new Size(UiLayout.Scale(460), UiLayout.Scale(414));
+        UiLayout.ConfigureForm(this, 460, 488, 430, 462);
+        // 套用已有图框（略高以容纳状态提示）+ 打印范围 + 纸张各一行。
+        ClientSize = new Size(UiLayout.Scale(460), UiLayout.Scale(466));
         FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
         ShowInTaskbar = false;
+        // 非模态核对红框时保持可见，不挡 CAD 缩放/平移。
+        TopMost = true;
 
         var table = new TableLayoutPanel
         {
@@ -117,54 +125,58 @@ public sealed class FieldBoxSelectDialog : Form
         table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-        // Row 0: 打印范围（可重新框选），Row 1-7: 字段（图名/图号必选，其余可选），Row 8: 纸张
-        for (var i = 0; i < 9; i++)
+        // Row 0: 套用已有图框（略高）；Row 1: 打印范围；Row 2-8: 字段；Row 9: 纸张
+        table.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(52)));
+        for (var i = 1; i < 10; i++)
         {
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(34)));
         }
-        // Row 9: 提示
+        // Row 10: 提示
         table.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        // Row 10: 按钮
+        // Row 11: 按钮
         table.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(36)));
 
+        table.Controls.Add(MakeLabel("套用已有图框"), 0, 0);
+        table.Controls.Add(MakeLibraryTemplateRow(), 1, 0);
+
         // 打印范围：显示当前尺寸，提供"框选"按钮供用户修正自动识别的外框。
-        table.Controls.Add(MakeLabel("打印范围"), 0, 0);
+        table.Controls.Add(MakeLabel("打印范围"), 0, 1);
         _printAreaStatus = MakeStatusLabel();
         UpdatePrintAreaStatus();
-        table.Controls.Add(MakePrintAreaRow(_printAreaStatus, SelectPrintArea), 1, 0);
+        table.Controls.Add(MakePrintAreaRow(_printAreaStatus, SelectPrintArea), 1, 1);
 
         // 图名/图号为必选字段，保存前必须完成框选。
-        table.Controls.Add(MakeLabel("图名 *"), 0, 1);
+        table.Controls.Add(MakeLabel("图名 *"), 0, 2);
         _titleStatus = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_titleStatus, SelectTitle, ClearTitle), 1, 1);
+        table.Controls.Add(MakeFieldRow(_titleStatus, SelectTitle, ClearTitle), 1, 2);
 
-        table.Controls.Add(MakeLabel("图号 *"), 0, 2);
+        table.Controls.Add(MakeLabel("图号 *"), 0, 3);
         _numberStatus = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_numberStatus, SelectNumber, ClearNumber), 1, 2);
+        table.Controls.Add(MakeFieldRow(_numberStatus, SelectNumber, ClearNumber), 1, 3);
 
         // 日期
-        table.Controls.Add(MakeLabel("日期"), 0, 3);
+        table.Controls.Add(MakeLabel("日期"), 0, 4);
         _dateStatus = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_dateStatus, SelectDate, ClearDate), 1, 3);
+        table.Controls.Add(MakeFieldRow(_dateStatus, SelectDate, ClearDate), 1, 4);
 
         // 版次
-        table.Controls.Add(MakeLabel("版次"), 0, 4);
+        table.Controls.Add(MakeLabel("版次"), 0, 5);
         _revisionStatus = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_revisionStatus, SelectRevision, ClearRevision), 1, 4);
+        table.Controls.Add(MakeFieldRow(_revisionStatus, SelectRevision, ClearRevision), 1, 5);
 
         // 设计阶段
-        table.Controls.Add(MakeLabel("设计阶段"), 0, 5);
+        table.Controls.Add(MakeLabel("设计阶段"), 0, 6);
         _phaseStatus = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_phaseStatus, SelectPhase, ClearPhase), 1, 5);
+        table.Controls.Add(MakeFieldRow(_phaseStatus, SelectPhase, ClearPhase), 1, 6);
 
         // 信息1/信息2为用户自定义可选字段，可用于后续文件名命名。
-        table.Controls.Add(MakeLabel("信息1"), 0, 6);
+        table.Controls.Add(MakeLabel("信息1"), 0, 7);
         _info1Status = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_info1Status, SelectInfo1, ClearInfo1), 1, 6);
+        table.Controls.Add(MakeFieldRow(_info1Status, SelectInfo1, ClearInfo1), 1, 7);
 
-        table.Controls.Add(MakeLabel("信息2"), 0, 7);
+        table.Controls.Add(MakeLabel("信息2"), 0, 8);
         _info2Status = MakeStatusLabel();
-        table.Controls.Add(MakeFieldRow(_info2Status, SelectInfo2, ClearInfo2), 1, 7);
+        table.Controls.Add(MakeFieldRow(_info2Status, SelectInfo2, ClearInfo2), 1, 8);
 
         if (initialState != null)
         {
@@ -172,25 +184,26 @@ public sealed class FieldBoxSelectDialog : Form
         }
 
         // 纸张：默认按打印范围自动识别，重新框选打印范围时同步刷新，也可手动修改。
-        table.Controls.Add(MakeLabel("纸张"), 0, 8);
-        table.Controls.Add(MakePaperRow(), 1, 8);
+        table.Controls.Add(MakeLabel("纸张"), 0, 9);
+        table.Controls.Add(MakePaperRow(), 1, 9);
         ApplyPaperOptions(
             paperOptions,
             initialState?.PaperName,
             initialState?.PaperWidthMm ?? 0d,
             initialState?.PaperHeightMm ?? 0d);
+        RefreshLibraryTemplateList();
 
         // 提示
         var hint = new Label
         {
-            Text = "图名、图号为必选。点击\"框选\"在 CAD 中框选对应区域，已选区域以红色临时框标识；纸张按打印范围自动识别，可手动修改。",
+            Text = "可先套用纸张兼容的已有图框（字段+纸张一并填入）。图名、图号为必选；点击\"框选\"可手动修改，已选区域以红色临时框标识。",
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.DimGray,
             Font = new Font(Font.FontFamily, Math.Max(Font.Size - 1, 7))
         };
         table.SetColumnSpan(hint, 2);
-        table.Controls.Add(hint, 0, 9);
+        table.Controls.Add(hint, 0, 10);
 
         // 按钮
         var buttons = new FlowLayoutPanel
@@ -235,9 +248,308 @@ public sealed class FieldBoxSelectDialog : Form
         buttons.Controls.Add(skip);
         buttons.Controls.Add(cancel);
         table.SetColumnSpan(buttons, 2);
-        table.Controls.Add(buttons, 0, 10);
+        table.Controls.Add(buttons, 0, 11);
 
         Controls.Add(table);
+    }
+
+    private Control MakeLibraryTemplateRow()
+    {
+        _libraryTemplateCombo.Dock = DockStyle.Fill;
+        _libraryTemplateCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _libraryTemplateCombo.DropDownWidth = UiLayout.Scale(360);
+        _libraryTemplateCombo.SelectedIndexChanged += (_, _) => OnLibraryTemplateSelected();
+
+        _libraryTemplateHint.Dock = DockStyle.Fill;
+        _libraryTemplateHint.TextAlign = ContentAlignment.MiddleLeft;
+        _libraryTemplateHint.ForeColor = Color.DimGray;
+        _libraryTemplateHint.AutoEllipsis = true;
+        _libraryTemplateHint.Font = new Font(Font.FontFamily, Math.Max(Font.Size - 1, 7));
+
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, UiLayout.Scale(14)));
+        panel.Controls.Add(_libraryTemplateCombo, 0, 0);
+        panel.Controls.Add(_libraryTemplateHint, 0, 1);
+        // 提示行挤一点高度：外层行仍是 34，下拉占主高，状态字更小。
+        return panel;
+    }
+
+    /// <summary>
+    /// 按当前纸张物理尺寸筛选库中兼容条目并刷新下拉。
+    /// 重新框选打印范围 / 更换纸张候选后应再次调用。
+    /// </summary>
+    private void RefreshLibraryTemplateList()
+    {
+        if (_applyingLibraryTemplate)
+        {
+            return;
+        }
+
+        var previousBlockName = (_libraryTemplateCombo.SelectedItem as LibraryTemplateItem)?.Definition?.BlockName;
+        _compatibleLibraryEntries = LoadCompatibleLibraryEntries();
+
+        _applyingLibraryTemplate = true;
+        try
+        {
+            _libraryTemplateCombo.BeginUpdate();
+            try
+            {
+                _libraryTemplateCombo.Items.Clear();
+                _libraryTemplateCombo.Items.Add(new LibraryTemplateItem(null, "（不套用）"));
+                foreach (var entry in _compatibleLibraryEntries)
+                {
+                    _libraryTemplateCombo.Items.Add(new LibraryTemplateItem(entry, FormatLibraryEntryDisplay(entry)));
+                }
+
+                var restoreIndex = 0;
+                if (!string.IsNullOrWhiteSpace(previousBlockName))
+                {
+                    for (var i = 1; i < _libraryTemplateCombo.Items.Count; i++)
+                    {
+                        if (_libraryTemplateCombo.Items[i] is LibraryTemplateItem item
+                            && item.Definition != null
+                            && string.Equals(item.Definition.BlockName, previousBlockName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            restoreIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                _libraryTemplateCombo.SelectedIndex = _libraryTemplateCombo.Items.Count > 0 ? restoreIndex : -1;
+            }
+            finally
+            {
+                _libraryTemplateCombo.EndUpdate();
+            }
+
+            var hasCompatible = _compatibleLibraryEntries.Count > 0;
+            _libraryTemplateCombo.Enabled = hasCompatible;
+            _libraryTemplateHint.Text = hasCompatible
+                ? $"已列出 {_compatibleLibraryEntries.Count} 个纸张兼容的已有图框，选择后立即套用字段与纸张。"
+                : "无与当前纸张尺寸兼容的已有图框；请手动框选字段。";
+            _libraryTemplateHint.ForeColor = hasCompatible ? Color.DimGray : Color.DarkOrange;
+        }
+        finally
+        {
+            _applyingLibraryTemplate = false;
+        }
+    }
+
+    private List<TitleBlockDefinition> LoadCompatibleLibraryEntries()
+    {
+        if (!TryGetCurrentPaperSizeMm(out var widthMm, out var heightMm))
+        {
+            return new List<TitleBlockDefinition>();
+        }
+
+        var toleranceMm = _paperDetectionOptions.LongPaperShortSideToleranceMm;
+        try
+        {
+            var library = TitleBlockLibraryStore.Load();
+            return library.Blocks
+                .Where(b => b != null
+                    && !string.IsNullOrWhiteSpace(b.BlockName)
+                    && PaperSizeDetector.ArePhysicalSizesCompatible(
+                        b.PaperWidthMm,
+                        b.PaperHeightMm,
+                        widthMm,
+                        heightMm,
+                        toleranceMm))
+                .OrderBy(b => b.BlockName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(b => b.PaperName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return new List<TitleBlockDefinition>();
+        }
+    }
+
+    private bool TryGetCurrentPaperSizeMm(out double widthMm, out double heightMm)
+    {
+        widthMm = 0d;
+        heightMm = 0d;
+        var paper = SelectedPaper ?? (_paperOptions.Count > 0 ? _paperOptions[0] : null);
+        if (paper == null || paper.PaperWidthMm <= 0d || paper.PaperHeightMm <= 0d)
+        {
+            return false;
+        }
+
+        widthMm = paper.PaperWidthMm;
+        heightMm = paper.PaperHeightMm;
+        return true;
+    }
+
+    private static string FormatLibraryEntryDisplay(TitleBlockDefinition entry)
+    {
+        var sizeText = entry.PaperWidthMm > 0d && entry.PaperHeightMm > 0d
+            ? $"{entry.PaperWidthMm:0.##}×{entry.PaperHeightMm:0.##} mm"
+            : "";
+        if (string.IsNullOrWhiteSpace(entry.PaperName))
+        {
+            return string.IsNullOrWhiteSpace(sizeText)
+                ? entry.BlockName
+                : $"{entry.BlockName} · {sizeText}";
+        }
+
+        return string.IsNullOrWhiteSpace(sizeText)
+            ? $"{entry.BlockName} · {entry.PaperName}"
+            : $"{entry.BlockName} · {entry.PaperName} {sizeText}";
+    }
+
+    private void OnLibraryTemplateSelected()
+    {
+        if (_applyingLibraryTemplate)
+        {
+            return;
+        }
+
+        if (_libraryTemplateCombo.SelectedItem is not LibraryTemplateItem item || item.Definition == null)
+        {
+            return;
+        }
+
+        ApplyLibraryTemplate(item.Definition);
+    }
+
+    /// <summary>
+    /// 将库条目的字段区域与纸张套用到当前新定义：相对坐标按源 CoordinateMode
+    /// 还原到<strong>当前</strong> ReferenceFrame 的块局部绝对矩形，并刷新红框。
+    /// </summary>
+    private void ApplyLibraryTemplate(TitleBlockDefinition template)
+    {
+        _applyingLibraryTemplate = true;
+        try
+        {
+            var frame = ReferenceFrame;
+            var mode = template.CoordinateMode;
+
+            ApplyConvertedField("图名", template.TitleRegion, mode, frame, r => TitleRegion = r, _titleStatus);
+            ApplyConvertedField("图号", template.DrawingNumberRegion, mode, frame, r => DrawingNumberRegion = r, _numberStatus);
+            ApplyConvertedField("日期", template.DateRegion, mode, frame, r => DateRegion = r, _dateStatus);
+            ApplyConvertedField("版次", template.RevisionRegion, mode, frame, r => RevisionRegion = r, _revisionStatus);
+            ApplyConvertedField("设计阶段", template.PhaseRegion, mode, frame, r => PhaseRegion = r, _phaseStatus);
+            ApplyConvertedField("信息1", template.Info1Region, mode, frame, r => Info1Region = r, _info1Status);
+            ApplyConvertedField("信息2", template.Info2Region, mode, frame, r => Info2Region = r, _info2Status);
+
+            EnsureAndSelectPaperFromTemplate(template);
+            RefreshAllMarkers();
+            _libraryTemplateHint.Text = $"已套用：{FormatLibraryEntryDisplay(template)}（仍可手动改框选或纸张）";
+            _libraryTemplateHint.ForeColor = Color.Green;
+        }
+        finally
+        {
+            _applyingLibraryTemplate = false;
+        }
+    }
+
+    private void ApplyConvertedField(
+        string fieldName,
+        LocalRectangle storedRegion,
+        string? coordinateMode,
+        LocalRectangle referenceFrame,
+        Action<LocalRectangle> setRegion,
+        Label statusLabel)
+    {
+        LocalRectangle absolute;
+        if (!storedRegion.HasArea())
+        {
+            absolute = new LocalRectangle();
+        }
+        else if (string.Equals(coordinateMode, "World", StringComparison.OrdinalIgnoreCase))
+        {
+            // World：库内为世界坐标，转到当前块局部（与编辑回显一致）。
+            var p1 = new Point3d(storedRegion.MinX, storedRegion.MinY, 0).TransformBy(_inverseBlockTransform);
+            var p2 = new Point3d(storedRegion.MaxX, storedRegion.MaxY, 0).TransformBy(_inverseBlockTransform);
+            absolute = LocalRectangle.FromPoints(p1.X, p1.Y, p2.X, p2.Y);
+        }
+        else
+        {
+            absolute = TitleBlockRegionConverter.FromStoredRelative(storedRegion, referenceFrame, coordinateMode);
+        }
+
+        setRegion(absolute);
+        UpdateStatus(statusLabel, absolute);
+
+        if (!absolute.HasArea())
+        {
+            _fieldCorners.Remove(fieldName);
+            _markers.Remove(fieldName);
+            return;
+        }
+
+        var worldRegion = RectangleGeometry.TransformRectangle(absolute, _blockTransform);
+        _fieldCorners[fieldName] = (
+            new Point3d(worldRegion.MinX, worldRegion.MinY, 0),
+            new Point3d(worldRegion.MaxX, worldRegion.MaxY, 0));
+    }
+
+    private void EnsureAndSelectPaperFromTemplate(TitleBlockDefinition template)
+    {
+        if (string.IsNullOrWhiteSpace(template.PaperName)
+            || template.PaperWidthMm <= 0d
+            || template.PaperHeightMm <= 0d)
+        {
+            return;
+        }
+
+        var options = _paperOptions.ToList();
+        var existingIndex = options.FindIndex(x =>
+            string.Equals(x.PaperName, template.PaperName, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs(x.PaperWidthMm - template.PaperWidthMm) <= 0.01d
+            && Math.Abs(x.PaperHeightMm - template.PaperHeightMm) <= 0.01d);
+
+        if (existingIndex < 0)
+        {
+            var width = Math.Abs(_printAreaCorners.Corner2.X - _printAreaCorners.Corner1.X);
+            var height = Math.Abs(_printAreaCorners.Corner2.Y - _printAreaCorners.Corner1.Y);
+            var scaleX = template.PaperWidthMm > 0 ? width / template.PaperWidthMm : 0d;
+            var scaleY = template.PaperHeightMm > 0 ? height / template.PaperHeightMm : 0d;
+            var scale = scaleX > 0 && scaleY > 0 ? (scaleX + scaleY) / 2d : Math.Max(scaleX, scaleY);
+            if (double.IsNaN(scale) || double.IsInfinity(scale) || scale <= 0)
+            {
+                scale = 1d;
+            }
+
+            options.Insert(0, new PaperDetection
+            {
+                PaperName = template.PaperName,
+                PaperWidthMm = template.PaperWidthMm,
+                PaperHeightMm = template.PaperHeightMm,
+                ScaleValue = scale,
+                ScaleText = scale >= 1d ? "1:" + scale.ToString("0.###") : (1d / scale).ToString("0.###") + ":1",
+                IsLong = template.PaperName.IndexOf('+') > 0,
+                RequiresCustomPaper = string.Equals(
+                    template.PaperName,
+                    PaperSizeDetector.CustomPaperName,
+                    StringComparison.OrdinalIgnoreCase),
+                Note = "来自已有图框套用"
+            });
+        }
+
+        ApplyPaperOptions(options, template.PaperName, template.PaperWidthMm, template.PaperHeightMm);
+    }
+
+    private sealed class LibraryTemplateItem
+    {
+        public LibraryTemplateItem(TitleBlockDefinition? definition, string display)
+        {
+            Definition = definition;
+            Display = display;
+        }
+
+        public TitleBlockDefinition? Definition { get; }
+        public string Display { get; }
+        public override string ToString() => Display;
     }
 
     private void ApplyInitialState(FieldBoxSelectInitialState state)
@@ -365,6 +677,13 @@ public sealed class FieldBoxSelectDialog : Form
             detectedHeight,
             _paperDetectionOptions,
             this));
+        // 打印范围变更后，兼容库条目可能变化；若仍选中某模板则按新 ReferenceFrame 重算字段。
+        RefreshLibraryTemplateList();
+        if (_libraryTemplateCombo.SelectedItem is LibraryTemplateItem stillSelected
+            && stillSelected.Definition != null)
+        {
+            ApplyLibraryTemplate(stillSelected.Definition);
+        }
     }
 
     /// <summary>
@@ -582,6 +901,13 @@ public sealed class FieldBoxSelectDialog : Form
         _paperName.Dock = DockStyle.Fill;
         _paperName.DropDownStyle = ComboBoxStyle.DropDownList;
         _paperName.DropDownWidth = UiLayout.Scale(330);
+        _paperName.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_applyingLibraryTemplate)
+            {
+                RefreshLibraryTemplateList();
+            }
+        };
 
         var panel = new TableLayoutPanel
         {
@@ -647,6 +973,7 @@ public sealed class FieldBoxSelectDialog : Form
         }
 
         ApplyPaperOptions(options, arbitrary.PaperName, arbitrary.PaperWidthMm, arbitrary.PaperHeightMm);
+        RefreshLibraryTemplateList();
     }
 
     private void ApplyPaperOptions(
@@ -661,6 +988,8 @@ public sealed class FieldBoxSelectDialog : Form
         }
 
         _paperOptions = paperOptions;
+        var suppressLibraryRefresh = _applyingLibraryTemplate;
+        _applyingLibraryTemplate = true;
         _paperName.BeginUpdate();
         try
         {
@@ -691,6 +1020,7 @@ public sealed class FieldBoxSelectDialog : Form
         finally
         {
             _paperName.EndUpdate();
+            _applyingLibraryTemplate = suppressLibraryRefresh;
         }
     }
 }

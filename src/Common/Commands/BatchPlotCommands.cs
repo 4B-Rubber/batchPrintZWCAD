@@ -407,6 +407,27 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         return result;
     }
 
+    /// <summary>
+    /// 非模态显示 WinForms 对话框并等到关闭：CAD 仍可缩放/平移，便于核对红色临时框。
+    /// </summary>
+    private static System.Windows.Forms.DialogResult ShowModelessDialogAndWait(System.Windows.Forms.Form form)
+    {
+        form.TopMost = true;
+#if ACAD_CORE
+        form.Show();
+#else
+        CadApp.ShowModelessDialog(form);
+#endif
+        while (form.Visible)
+        {
+            System.Windows.Forms.Application.DoEvents();
+            System.Threading.Thread.Sleep(15);
+        }
+
+        CadWindowFocus.ActivateCadWindow();
+        return form.DialogResult;
+    }
+
     private static bool? ShowModalDialog(Window window)
     {
         return CadDialog.ShowModal(window);
@@ -678,25 +699,13 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
     }
 
     private static LocalRectangle ToFrameRelative(LocalRectangle region, LocalRectangle referenceFrame)
-    {
-        return LocalRectangle.FromPoints(
-            region.MinX - referenceFrame.MinX,
-            region.MinY - referenceFrame.MinY,
-            region.MaxX - referenceFrame.MinX,
-            region.MaxY - referenceFrame.MinY);
-    }
+        => TitleBlockRegionConverter.ToFrameRelative(region, referenceFrame);
 
     /// <summary>
     /// 动态加长图框的标题栏通常跟随右边界移动；横向以外框右边、纵向以外框下边存储相对坐标。
     /// </summary>
     private static LocalRectangle ToFrameRightBottomRelative(LocalRectangle region, LocalRectangle referenceFrame)
-    {
-        return LocalRectangle.FromPoints(
-            region.MinX - referenceFrame.MaxX,
-            region.MinY - referenceFrame.MinY,
-            region.MaxX - referenceFrame.MaxX,
-            region.MaxY - referenceFrame.MinY);
-    }
+        => TitleBlockRegionConverter.ToFrameRightBottomRelative(region, referenceFrame);
 
     private static bool IsGenericDynamicPaperName(string paperName)
     {

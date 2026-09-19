@@ -1107,6 +1107,35 @@ public static class PaperSizeDetector
     }
 
     /// <summary>
+    /// 两套物理纸张尺寸是否兼容（允许横竖对调），容差与批打纸张识别短边容差同族。
+    /// 未显式传入容差时按 1mm；下限 0.05mm，与 PreferredPaper 匹配一致。
+    /// </summary>
+    public static bool ArePhysicalSizesCompatible(
+        double widthMmA,
+        double heightMmA,
+        double widthMmB,
+        double heightMmB,
+        double? toleranceMm = null)
+    {
+        if (widthMmA <= 0d || heightMmA <= 0d || widthMmB <= 0d || heightMmB <= 0d)
+        {
+            return false;
+        }
+
+        var tol = Math.Max(0.05d, toleranceMm ?? 1d);
+        var direct =
+            Math.Abs(widthMmA - widthMmB) <= tol
+            && Math.Abs(heightMmA - heightMmB) <= tol;
+        if (direct)
+        {
+            return true;
+        }
+
+        return Math.Abs(widthMmA - heightMmB) <= tol
+            && Math.Abs(heightMmA - widthMmB) <= tol;
+    }
+
+    /// <summary>
     /// 候选纸张的物理尺寸是否与图框库固定纸张一致（两个方向都允许），
     /// 容差沿用短边毫米容差，未设置时按 1mm。
     /// </summary>
@@ -1117,17 +1146,12 @@ public static class PaperSizeDetector
             return false;
         }
 
-        var toleranceMm = Math.Max(0.05d, options.LongPaperShortSideToleranceMm ?? 1d);
-        var direct =
-            Math.Abs(candidate.PaperWidthMm - options.PreferredPaperWidthMm) <= toleranceMm
-            && Math.Abs(candidate.PaperHeightMm - options.PreferredPaperHeightMm) <= toleranceMm;
-        if (direct)
-        {
-            return true;
-        }
-
-        return Math.Abs(candidate.PaperWidthMm - options.PreferredPaperHeightMm) <= toleranceMm
-            && Math.Abs(candidate.PaperHeightMm - options.PreferredPaperWidthMm) <= toleranceMm;
+        return ArePhysicalSizesCompatible(
+            candidate.PaperWidthMm,
+            candidate.PaperHeightMm,
+            options.PreferredPaperWidthMm,
+            options.PreferredPaperHeightMm,
+            options.LongPaperShortSideToleranceMm);
     }
 
     private static bool MatchesPreferredPaperBase(PaperCandidate candidate, DetectionOptions options)
