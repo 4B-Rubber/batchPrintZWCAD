@@ -102,35 +102,96 @@ internal sealed class NumberBox : TextBox
             return;
         }
 
-        if (double.TryParse(Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var parsed)
-            || double.TryParse(Text, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+        // 输入过程中不夹紧、不回写，避免改 600 时中间态被立刻拉回 Max。
+        // 合法范围内才同步 Value；越界或未完成输入等失焦/回车再提交。
+        if (!TryParseText(out var parsed))
         {
-            var clamped = Clamp(parsed);
-            if (Math.Abs(clamped - Value) > 1e-9)
-            {
-                SetCurrentValue(ValueProperty, clamped);
-            }
+            return;
         }
-        else
+
+        if (parsed < Min || parsed > Max)
         {
-            // 无法解析时回退为当前值，保持与 NumericUpDown 的行为一致。
-            SyncText();
+            return;
+        }
+
+        if (Math.Abs(parsed - Value) > 1e-9)
+        {
+            _syncing = true;
+            try
+            {
+                SetCurrentValue(ValueProperty, parsed);
+            }
+            finally
+            {
+                _syncing = false;
+            }
+
+            ValueChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
     private void OnValueChanged()
     {
+        // 焦点在框内时由用户文本主导，避免 SyncText 打断光标/选区。
+        if (!_syncing && !IsKeyboardFocusWithin)
+        {
+            SyncText();
+        }
+
+        if (!_syncing)
+        {
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    protected override void OnLostFocus(RoutedEventArgs e)
+    {
+        base.OnLostFocus(e);
+        CommitText();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitText();
+            e.Handled = true;
+            return;
+        }
+
+        base.OnKeyDown(e);
+    }
+
+    /// <summary>失焦或回车时把文本规范到 Min/Max，并写回显示。</summary>
+    private void CommitText()
+    {
+        if (TryParseText(out var parsed))
+        {
+            Value = Clamp(parsed);
+        }
+
         SyncText();
-        ValueChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool TryParseText(out double parsed)
+    {
+        return double.TryParse(Text, NumberStyles.Float, CultureInfo.CurrentCulture, out parsed)
+            || double.TryParse(Text, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed);
     }
 
     private void SyncText()
     {
         _syncing = true;
-        Text = Decimals > 0
-            ? Value.ToString("F" + Decimals, CultureInfo.InvariantCulture)
-            : Value.ToString("0", CultureInfo.InvariantCulture);
-        _syncing = false;
+        try
+        {
+            Text = Decimals > 0
+                ? Value.ToString("F" + Decimals, CultureInfo.InvariantCulture)
+                : Value.ToString("0", CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 }
 
