@@ -52,11 +52,22 @@ public sealed partial class RectangleBatchPlotForm : Window
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public PlotJob Job { get; set; } = new();
-        public IReadOnlyList<PaperDetection> Options { get; set; } = new PaperDetection[0];
+        private IReadOnlyList<PaperDetection> _options = new PaperDetection[0];
+        private IReadOnlyList<string> _paperOptions = new string[0];
+
+        public IReadOnlyList<PaperDetection> Options
+        {
+            get => _options;
+            set
+            {
+                _options = value ?? new PaperDetection[0];
+                // 下拉候选只在纸张候选变化时格式化一次；滚动时虚拟化行反复绑定不再重复生成列表。
+                _paperOptions = _options.Select(PaperSizeDetector.FormatOption).ToList();
+            }
+        }
 
         /// <summary>纸张下拉候选（原 DataGridViewComboBoxCell.DataSource 语义）。</summary>
-        public IReadOnlyList<string> PaperOptions =>
-            Options.Select(PaperSizeDetector.FormatOption).ToList();
+        public IReadOnlyList<string> PaperOptions => _paperOptions;
 
         public bool Selected
         {
@@ -127,6 +138,10 @@ public sealed partial class RectangleBatchPlotForm : Window
     private readonly TemporarySequenceOverlay _overlay;
     /// <summary>CAD 红框高亮的任务；按引用保存，表头排序或删行后不会错位。</summary>
     private PlotJob? _highlightedJob;
+    /// <summary>防抖后最近一次真正写入 CAD 的高亮任务；同一行重复触发时跳过 CAD 刷新。</summary>
+    private PlotJob? _appliedHighlightJob;
+    /// <summary>行切换高亮防抖：键盘连按 / 滚动选择时只在停下约 120ms 后刷新一次 CAD。</summary>
+    private DispatcherTimer? _highlightTimer;
     private int _overlayScheduleGeneration;
     private readonly BindingList<Row> _rows = new();
     private readonly BindingList<Row> _displayRows = new();
@@ -180,6 +195,7 @@ public sealed partial class RectangleBatchPlotForm : Window
     protected override void OnClosed(EventArgs e)
     {
         _overlayScheduleGeneration++;
+        _highlightTimer?.Stop();
         // 关闭窗口时只清理临时红框和序号，不再退订或接管 CAD 删除命令。
         _overlay.Dispose();
         base.OnClosed(e);
@@ -219,6 +235,8 @@ public sealed partial class RectangleBatchPlotForm : Window
         _lastScanScope = null;
         _hasAttributeIdentity = false;
         _highlightedJob = null;
+        _appliedHighlightJob = null;
+        _highlightTimer?.Stop();
         UpdateAttributeIdentityColumns();
         _viewSortedByHeader = false;
         _sortMemberPath = "";
@@ -466,9 +484,39 @@ public sealed partial class RectangleBatchPlotForm : Window
         // 打印期间不改 CAD 实体，避免与出图引擎争用文档；打印结束后在 finally 中补一次。
         if (_printCts != null)
         {
+            _highlightTimer?.Stop();
             return;
         }
 
+        if (_highlightTimer == null)
+        {
+            _highlightTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(120)
+            };
+            _highlightTimer.Tick += HighlightTimer_Tick;
+        }
+
+        // 重新计时：连续切换行时只刷新最后停下的那一行。
+        _highlightTimer.Stop();
+        _highlightTimer.Start();
+    }
+
+    private void HighlightTimer_Tick(object? sender, EventArgs e)
+    {
+        _highlightTimer?.Stop();
+        if (_printCts != null)
+        {
+            return;
+        }
+
+        var job = _highlightedJob;
+        if (job == null || ReferenceEquals(job, _appliedHighlightJob))
+        {
+            return;
+        }
+
+        _appliedHighlightJob = job;
         _overlay.SetHighlight(job);
     }
 
@@ -543,10 +591,22 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
+        // 表格整体重建（删除 / 不打印 / 排序 / 滚动出新行）时，下拉框重新绑定 SelectedItem 也会触发本事件。
+        // 只有用户真正在操作下拉框、且纸张确实变了才处理，否则主导模式下每个可见行都会重识别图名图号。
+        var comboBox = (ComboBox)sender;
+        var userInteracting = comboBox.IsDropDownOpen || comboBox.IsKeyboardFocusWithin;
+        if (!PaperChoiceChangeRules.ShouldHandleSelectionChange(e.RemovedItems.Count, userInteracting))
+        {
+            return;
+        }
+
         // 对应原 GridCellValueChanged 的 PaperChoice 分支。
         var value = row.PaperChoice;
         var option = row.Options.FirstOrDefault(candidate => string.Equals(PaperSizeDetector.FormatOption(candidate), value, StringComparison.Ordinal));
-        if (option != null)
+        if (option != null
+            && !PaperChoiceChangeRules.IsSamePaper(
+                row.Job.PaperName, row.Job.ScaleText, row.Job.PaperWidthMm, row.Job.PaperHeightMm, row.Job.RequiresCustomPaperRegistration,
+                option.PaperName, option.ScaleText, option.PaperWidthMm, option.PaperHeightMm, option.RequiresCustomPaper))
         {
             ApplyPaper(row.Job, option);
             row.RefreshFromJob();
@@ -2277,6 +2337,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             }
             // 打印期间跳过了 CAD 高亮切换，结束后按当前行同步一次（相同任务时为空操作）。
             _overlay.SetHighlight(_highlightedJob);
+            _appliedHighlightJob = _highlightedJob;
             UpdateVisuals();
         }
     }
