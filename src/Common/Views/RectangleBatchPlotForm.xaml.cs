@@ -211,7 +211,6 @@ public sealed partial class RectangleBatchPlotForm : Window
     private void ScanSelectedObjects_Click(object sender, RoutedEventArgs e) => ScanSelectedObjects();
 
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
-    private void AddDwgFolder_Click(object sender, RoutedEventArgs e) => AddDwgFolder();
 
     private void ClearRows_Click(object sender, RoutedEventArgs e) => ClearRows();
 
@@ -997,76 +996,52 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void AddDwgFiles()
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Filter = "DWG 文件 (*.dwg)|*.dwg",
-            Multiselect = true,
-            Title = "选择要批量打印的 DWG"
-        };
-
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        var files = dialog.FileNames
-            .Select(Path.GetFullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        BeginMultiFileBatch(files);
-    }
-
-    /// <summary>选择文件夹，收集其中（含子文件夹）全部 DWG，后续流程与多文件批打相同。</summary>
-    private void AddDwgFolder()
-    {
-        using var dialog = new System.Windows.Forms.FolderBrowserDialog
-        {
-            Description = "选择包含 DWG 的文件夹（将包含子文件夹内的文件）",
-            ShowNewFolderButton = false
-        };
         var seed = _outputDirectory.Text.Trim();
         if (string.IsNullOrWhiteSpace(seed) || !Directory.Exists(seed))
         {
             seed = SourceDirectory();
         }
 
-        if (!string.IsNullOrWhiteSpace(seed) && Directory.Exists(seed))
-        {
-            dialog.SelectedPath = seed;
-        }
-
-        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK
-            || string.IsNullOrWhiteSpace(dialog.SelectedPath))
+        var owner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var result = DwgBatchFilePicker.Pick(owner, seed, "选择要批量打印的 DWG");
+        if (result == null)
         {
             return;
         }
 
-        List<string> files;
-        try
+        if (result.IsFolder)
         {
-            files = CollectDwgFilesInFolder(dialog.SelectedPath);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(
-                "读取文件夹失败: " + ex.Message,
-                Title,
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            var folder = result.FolderPath ?? "";
+            List<string> files;
+            try
+            {
+                files = CollectDwgFilesInFolder(folder);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "读取文件夹失败: " + ex.Message,
+                    Title,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (files.Count == 0)
+            {
+                MessageBox.Show(
+                    "该文件夹内未找到 DWG 文件。",
+                    Title,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            BeginMultiFileBatch(files);
             return;
         }
 
-        if (files.Count == 0)
-        {
-            MessageBox.Show(
-                "该文件夹内未找到 DWG 文件。",
-                Title,
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-
-        BeginMultiFileBatch(files);
+        BeginMultiFileBatch(result.Files);
     }
 
     /// <summary>枚举文件夹及其子文件夹中的全部 .dwg（忽略大小写去重，按路径排序）。</summary>
