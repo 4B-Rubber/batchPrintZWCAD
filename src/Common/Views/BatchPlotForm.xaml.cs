@@ -1798,6 +1798,7 @@ public sealed partial class BatchPlotForm : Window
             if (!form.RequestPickDirectoryRowHeight
                 && !form.RequestPickDirectoryTextAppearance
                 && !form.RequestPickScaleFromCad
+                && !form.RequestPickFrameBlockName
                 && string.IsNullOrWhiteSpace(form.RequestedDirectoryColumnKey))
             {
                 tabIndex = form.SelectedTabIndex;

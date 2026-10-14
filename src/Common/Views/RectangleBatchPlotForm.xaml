@@ -119,7 +119,11 @@
                     <ComboBox x:Name="_style" Grid.Column="0" IsEditable="False"
                               VerticalContentAlignment="Center" Margin="0,0,4,0"
                               SelectionChanged="Style_SelectionChanged" />
-                    <Button x:Name="_styleSettingsButton" Grid.Column="1" Content="设置" MinWidth="56"
+                                    <Button x:Name="_renumberBtn" Content="图号重排" MinWidth="92"
+                        Margin="0,0,8,0" Padding="10,4"
+                        Style="{StaticResource PluginButtonStyle}"
+                        Click="RenumberDrawingNumbers_Click"/>
+<Button x:Name="_styleSettingsButton" Grid.Column="1" Content="设置" MinWidth="56"
                             Style="{StaticResource PluginButtonStyle}" IsEnabled="False"
                             Click="StyleSettings_Click"
                             ToolTip="打开当前选中的 CTB 打印样式进行设置。" />
