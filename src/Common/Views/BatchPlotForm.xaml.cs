@@ -2834,8 +2834,8 @@ public sealed partial class BatchPlotForm : Window
     {
         public double Value { get; set; }
         public override string ToString() => Value > 0
-            ? $"+ {Value:0.#} mm"
-            : $"- {Math.Abs(Value):0.#} mm";
+            ? $"+ {Value:0.#}"
+            : $"- {Math.Abs(Value):0.#}";
     }
 
     /// <summary>初始化留白下拉列表，正值=扩大纸张，负值=缩比例，整数1~10配对显示。</summary>

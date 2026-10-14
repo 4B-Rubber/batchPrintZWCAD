@@ -420,26 +420,6 @@ public sealed partial class BatchPlotCommands : IExtensionApplication
         return result;
     }
 
-    /// <summary>
-    /// 非模态显示 WinForms 对话框并等到关闭：CAD 仍可缩放/平移，便于核对红色临时框。
-    /// </summary>
-    private static System.Windows.Forms.DialogResult ShowModelessDialogAndWait(System.Windows.Forms.Form form)
-    {
-        form.TopMost = true;
-#if ACAD_CORE
-        form.Show();
-#else
-        CadApp.ShowModelessDialog(form);
-#endif
-        while (form.Visible)
-        {
-            System.Windows.Forms.Application.DoEvents();
-            System.Threading.Thread.Sleep(15);
-        }
-
-        CadWindowFocus.ActivateCadWindow();
-        return form.DialogResult;
-    }
 
     private static bool? ShowModalDialog(Window window)
     {
