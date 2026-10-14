@@ -1637,6 +1637,10 @@ public static class RectangleFrameScanner
                 {
                     continue;
                 }
+                if (!IsBlockAllowedByFrameFilter(blockRef))
+                {
+                    continue;
+                }
                 if (!IsEntityVisible(blockRef)
                     || string.Equals(blockRef.Layer, TemporaryOverlayLayer, StringComparison.OrdinalIgnoreCase)
                     || !IsEntityLayerScannable(tr, blockRef)
@@ -1980,6 +1984,10 @@ public static class RectangleFrameScanner
         }
         // ── 分支 2：BlockReference → 缓存 + 递归进入 ──
         if (entity is not BlockReference blockReference || depth >= 12)
+        {
+            return;
+        }
+        if (!IsBlockAllowedByFrameFilter(blockReference))
         {
             return;
         }
