@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -24,8 +25,9 @@ public static class DwgBatchFilePicker
         {
             dialog = CreateConfiguredDialog(seedFolder, title);
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailure("CreateConfiguredDialog", ex);
             dialog = null;
         }
 
@@ -37,7 +39,13 @@ public static class DwgBatchFilePicker
         var events = new DwgBatchFilePickerEvents(dialog, title);
         try
         {
-            uint cookie = dialog.Advise(events);
+            int adviseHr = dialog.Advise(events, out uint cookie);
+            if (adviseHr < 0)
+            {
+                LogFailure($"Advise failed HRESULT=0x{adviseHr:X8}");
+                return PickWithSystemDialog(title);
+            }
+
             int hr;
             try
             {
@@ -49,9 +57,12 @@ public static class DwgBatchFilePicker
                 {
                     dialog.Unadvise(cookie);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFailure("Unadvise", ex);
                 }
+
+                events.Detach();
             }
 
             // 选择文件夹时对话框按「取消」关闭（hr 非 0），这里以标志位优先判定。
@@ -68,14 +79,24 @@ public static class DwgBatchFilePicker
             var files = CollectSelectedFiles(dialog);
             return files.Count == 0 ? null : DwgBatchPickResult.ForFiles(files);
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailure("Pick", ex);
             return null;
         }
         finally
         {
             Marshal.ReleaseComObject(dialog);
         }
+    }
+
+    internal static void LogFailure(string where, Exception? ex = null)
+    {
+        var msg = ex == null
+            ? $"[DwgBatchFilePicker] {where}"
+            : $"[DwgBatchFilePicker] {where}: {ex}";
+        Trace.WriteLine(msg);
+        Debug.WriteLine(msg);
     }
 
     private static IFileOpenDialog CreateConfiguredDialog(string? seedFolder, string title)
@@ -118,8 +139,9 @@ public static class DwgBatchFilePicker
                 dialog.SetFolder(item);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailure("TrySetSeedFolder", ex);
         }
         finally
         {
@@ -150,8 +172,9 @@ public static class DwgBatchFilePicker
                         files.Add(Path.GetFullPath(path!));
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LogFailure($"CollectSelectedFiles[{i}]", ex);
                 }
                 finally
                 {
@@ -162,8 +185,9 @@ public static class DwgBatchFilePicker
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailure("CollectSelectedFiles", ex);
         }
         finally
         {
@@ -188,8 +212,9 @@ public static class DwgBatchFilePicker
             item.GetDisplayName(Sigdn.FileSystemPath, out var path);
             return string.IsNullOrWhiteSpace(path) ? null : path;
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailure("TryGetFileSystemPath", ex);
             return null;
         }
     }
@@ -255,6 +280,12 @@ public sealed class DwgBatchPickResult
 [ClassInterface(ClassInterfaceType.None)]
 internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogControlEvents
 {
+    private const int GwlWndProc = -4;
+    private const uint WmCommand = 0x0111;
+    private const uint WmClose = 0x0010;
+    private const uint WmNcDestroy = 0x0082;
+    private const uint WmFolderClickAsync = 0x8000 + 0x7E;
+
     private readonly IFileOpenDialog _dialog;
     private readonly string _title;
     private bool _folderPicked;
@@ -273,6 +304,12 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
     public bool FolderChosen { get; private set; }
 
     public string? FolderPath { get; private set; }
+
+    /// <summary>Show 结束后恢复原 WndProc，避免窗口被销毁后仍挂着托管委托。</summary>
+    public void Detach()
+    {
+        UninstallSubclass();
+    }
 
     public int OnFileOk(IFileDialog pfd) => 0;
 
@@ -358,11 +395,55 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
             _dialogHwnd = hwnd;
             _buttonHwnd = button;
             _wndProcDelegate = DialogWndProc;
-            _origWndProc = SetWindowLongPtrW(hwnd, -4, Marshal.GetFunctionPointerForDelegate(_wndProcDelegate));
+            var newProc = Marshal.GetFunctionPointerForDelegate(_wndProcDelegate);
+            _origWndProc = SetWindowLongPtr(hwnd, GwlWndProc, newProc);
+            if (_origWndProc == IntPtr.Zero)
+            {
+                var err = Marshal.GetLastWin32Error();
+                // ERROR_SUCCESS with null prev is rare; treat zero as failure only if GetLastError != 0
+                if (err != 0)
+                {
+                    DwgBatchFilePicker.LogFailure($"SetWindowLongPtr failed Win32={err}");
+                    _wndProcDelegate = null;
+                    return;
+                }
+            }
+
             _subclassInstalled = true;
         }
-        catch
+        catch (Exception ex)
         {
+            DwgBatchFilePicker.LogFailure("TryInstallSubclass", ex);
+        }
+    }
+
+    private void UninstallSubclass()
+    {
+        if (!_subclassInstalled || _dialogHwnd == IntPtr.Zero)
+        {
+            _subclassInstalled = false;
+            return;
+        }
+
+        try
+        {
+            if (_origWndProc != IntPtr.Zero)
+            {
+                SetWindowLongPtr(_dialogHwnd, GwlWndProc, _origWndProc);
+            }
+        }
+        catch (Exception ex)
+        {
+            DwgBatchFilePicker.LogFailure("UninstallSubclass", ex);
+        }
+        finally
+        {
+            _subclassInstalled = false;
+            _origWndProc = IntPtr.Zero;
+            // 保留 _wndProcDelegate 至方法结束，避免恢复瞬间 GC 回收委托
+            _wndProcDelegate = null;
+            _dialogHwnd = IntPtr.Zero;
+            _buttonHwnd = IntPtr.Zero;
         }
     }
 
@@ -371,11 +452,21 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
         var found = IntPtr.Zero;
         EnumThreadWindows(GetCurrentThreadId(), (hwnd, lp) =>
         {
+            var className = GetClassNameOf(hwnd);
             var text = GetWindowTextOf(hwnd);
+            // 优先：标题匹配 + 标准对话框类；其次仅标题 Contains（兼容旧行为）
             if (text.Length > 0 && text.Contains(_title))
             {
-                found = hwnd;
-                return false;
+                if (className == "#32770" || FindFolderButton(hwnd) != IntPtr.Zero)
+                {
+                    found = hwnd;
+                    return false;
+                }
+
+                if (found == IntPtr.Zero)
+                {
+                    found = hwnd;
+                }
             }
 
             return true;
@@ -383,20 +474,37 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
         return found;
     }
 
+    /// <summary>
+    /// 找「选择文件夹」按钮：优先控件 ID（AddPushButton 的 FolderButtonId），
+    /// 部分系统上 GetDlgCtrlID 恒为 0 时再按文案兜底。
+    /// </summary>
     private static IntPtr FindFolderButton(IntPtr parent)
     {
-        var found = IntPtr.Zero;
+        var byId = IntPtr.Zero;
+        var byText = IntPtr.Zero;
         EnumChildWindows(parent, (hwnd, lp) =>
         {
-            if (GetClassNameOf(hwnd) == "Button" && GetWindowTextOf(hwnd) == "选择文件夹")
+            if (GetClassNameOf(hwnd) != "Button")
             {
-                found = hwnd;
+                return true;
+            }
+
+            var id = GetDlgCtrlID(hwnd);
+            if (id == DwgBatchFilePicker.FolderButtonId)
+            {
+                byId = hwnd;
                 return false;
+            }
+
+            if (byText == IntPtr.Zero && GetWindowTextOf(hwnd) == "选择文件夹")
+            {
+                byText = hwnd;
             }
 
             return true;
         }, IntPtr.Zero);
-        return found;
+
+        return byId != IntPtr.Zero ? byId : byText;
     }
 
     private static string GetWindowTextOf(IntPtr hwnd)
@@ -417,12 +525,12 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
     {
         try
         {
-            if (msg == 0x0111 && lParam == _buttonHwnd)
+            if (msg == WmCommand && lParam == _buttonHwnd)
             {
                 // 不能在此同步 Close（对话框消息分发未返回，同步关闭会卡死），转投自定义消息异步处理。
-                PostMessageW(hWnd, 0x8000 + 0x7E, IntPtr.Zero, IntPtr.Zero);
+                PostMessageW(hWnd, WmFolderClickAsync, IntPtr.Zero, IntPtr.Zero);
             }
-            else if (msg == 0x8000 + 0x7E)
+            else if (msg == WmFolderClickAsync)
             {
                 if (!_folderPicked)
                 {
@@ -431,9 +539,25 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
 
                 return IntPtr.Zero;
             }
+            else if (msg == WmNcDestroy)
+            {
+                // 窗口销毁前恢复，避免悬挂托管 WndProc
+                var orig = _origWndProc;
+                _subclassInstalled = false;
+                _origWndProc = IntPtr.Zero;
+                _dialogHwnd = IntPtr.Zero;
+                _buttonHwnd = IntPtr.Zero;
+                if (orig != IntPtr.Zero)
+                {
+                    return CallWindowProcW(orig, hWnd, msg, wParam, lParam);
+                }
+
+                return IntPtr.Zero;
+            }
         }
-        catch
+        catch (Exception ex)
         {
+            DwgBatchFilePicker.LogFailure("DialogWndProc", ex);
         }
 
         return CallWindowProcW(_origWndProc, hWnd, msg, wParam, lParam);
@@ -462,17 +586,19 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
             _folderPicked = true;
             FolderChosen = true;
             FolderPath = folder;
+            UninstallSubclass();
             if (hwnd != IntPtr.Zero)
             {
-                PostMessageW(hwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE：按取消关闭，结果由 FolderChosen 标志决定
+                PostMessageW(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE：按取消关闭，结果由 FolderChosen 标志决定
             }
             else
             {
                 _dialog.Close(0);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DwgBatchFilePicker.LogFailure("HandleFolderClick", ex);
         }
     }
 
@@ -488,8 +614,9 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
                 return path;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DwgBatchFilePicker.LogFailure("ReadCurrentFolder/selection", ex);
         }
         finally
         {
@@ -509,8 +636,9 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
                 return path;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DwgBatchFilePicker.LogFailure("ReadCurrentFolder/folder", ex);
         }
         finally
         {
@@ -521,6 +649,17 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
         }
 
         return null;
+    }
+
+    /// <summary>按进程位数选择 SetWindowLongPtrW / SetWindowLongW（x86 无 Ptr 入口）。</summary>
+    private static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+    {
+        if (IntPtr.Size == 8)
+        {
+            return SetWindowLongPtrW(hWnd, nIndex, dwNewLong);
+        }
+
+        return new IntPtr(SetWindowLongW(hWnd, nIndex, dwNewLong.ToInt32()));
     }
 
     private delegate bool EnumThreadWindowsProc(IntPtr hwnd, IntPtr lParam);
@@ -542,8 +681,14 @@ internal sealed class DwgBatchFilePickerEvents : IFileDialogEvents, IFileDialogC
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    [DllImport("user32.dll")]
+    private static extern int GetDlgCtrlID(IntPtr hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+    private static extern int SetWindowLongW(IntPtr hWnd, int nIndex, int dwNewLong);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr CallWindowProcW(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -619,7 +764,8 @@ internal interface IFileDialog
 
     uint GetFileTypeIndex();
 
-    uint Advise(IFileDialogEvents pfde);
+    [PreserveSig]
+    int Advise(IFileDialogEvents pfde, out uint pdwCookie);
 
     void Unadvise(uint dwCookie);
 
@@ -672,7 +818,8 @@ internal interface IFileOpenDialog
 
     uint GetFileTypeIndex();
 
-    uint Advise(IFileDialogEvents pfde);
+    [PreserveSig]
+    int Advise(IFileDialogEvents pfde, out uint pdwCookie);
 
     void Unadvise(uint dwCookie);
 
