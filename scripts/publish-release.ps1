@@ -1,4 +1,4 @@
-# 默认双平台发布 Release：打包（可选）→ 打 tag → 推代码/tag → GitHub + Gitee 创建 Release 并上传 ZIP。
+﻿# 默认双平台发布 Release：打包（可选）→ 打 tag → 推代码/tag → GitHub + Gitee 创建 Release 并上传 ZIP。
 # 用法：
 #   pwsh scripts/publish-release.ps1 -Version 1.15.7.8
 #   pwsh scripts/publish-release.ps1 -Version 1.15.7.8 -SkipPackage   # 已有 release\v1.15.7.8\

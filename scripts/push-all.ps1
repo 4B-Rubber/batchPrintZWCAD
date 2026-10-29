@@ -1,4 +1,4 @@
-# 默认双平台推送：GitHub + Gitee（代码与 tag）。
+﻿# 默认双平台推送：GitHub + Gitee（代码与 tag）。
 # 用法：
 #   pwsh scripts/push-all.ps1
 #   pwsh scripts/push-all.ps1 -Branch main -Tags

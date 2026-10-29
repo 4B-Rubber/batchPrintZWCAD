@@ -212,206 +212,6 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void AddDwgFiles_Click(object sender, RoutedEventArgs e) => AddDwgFiles();
 
-    
-    // --- 图号重排（复用 DrawingNumberReorderDialog / CadTextUpdater） ---
-    private DrawingNumberReorderDialog? _renumberDialog;
-
-    private List<PlotJob>? _renumberCurrentJobs;
-
-    private Dictionary<PlotJob, string>? _renumberOriginalNumbers;
-
-    private void RenumberDrawingNumbers_Click(object sender, RoutedEventArgs e) => RenumberDrawingNumbers();
-
-    private void RenumberDrawingNumbers()
-    {
-        if (_renumberDialog != null)
-        {
-            _renumberDialog.Activate();
-            return;
-        }
-
-        _grid.CommitEdit(DataGridEditingUnit.Row, true);
-        // 仅对当前文档的图框重排；其他 DWG 未打开，无法反写。
-        var currentJobs = _rows.Select(row => row.Job).Where(IsCurrentDocumentJob).ToList();
-        if (currentJobs.Count == 0)
-        {
-            MessageBox.Show("当前没有本图文档的图框可重排。", "图号重排", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        // 保存原始图号，非模态窗口取消/关闭时恢复。
-        _renumberCurrentJobs = currentJobs;
-        _renumberOriginalNumbers = currentJobs.ToDictionary(j => j, j => j.DrawingNumber);
-        var detectedPrefix = DetectCommonDrawingNumberPrefix(currentJobs);
-        _renumberDialog = new DrawingNumberReorderDialog(
-            currentJobs.Count,
-            detectedPrefix,
-            _settings.SortOrderHorizontalFirst);
-        _renumberDialog.PreviewRequested += PreviewRenumberDrawingNumbers;
-        _renumberDialog.Closed += RenumberDialogClosed;
-        _renumberDialog.Show();
-        _renumberDialog.Activate();
-    }
-
-    private void PreviewRenumberDrawingNumbers()
-    {
-        if (_renumberDialog == null || _renumberCurrentJobs == null)
-        {
-            return;
-        }
-
-        var sorted = SortRenumberJobsByLayout(_renumberCurrentJobs, _renumberDialog.HorizontalFirst);
-        ApplyRenumbering(sorted, _renumberDialog.Prefix, _renumberDialog.Suffix, _renumberDialog.StartNumber, _renumberDialog.Digits);
-        RefreshRowsAfterRenumber();
-        ShowRenumberPreviewOverlay(sorted);
-    }
-
-    private void RenumberDialogClosed(object? sender, EventArgs e)
-    {
-        var dialog = (DrawingNumberReorderDialog)sender!;
-        var currentJobs = _renumberCurrentJobs ?? new List<PlotJob>();
-        var originalNumbers = _renumberOriginalNumbers ?? new Dictionary<PlotJob, string>();
-        _renumberDialog = null;
-        _renumberCurrentJobs = null;
-        _renumberOriginalNumbers = null;
-
-        if (!dialog.Accepted)
-        {
-            // 恢复原始图号，并把 CAD 红框恢复为打印顺序数字。
-            foreach (var kv in originalNumbers)
-            {
-                kv.Key.DrawingNumber = kv.Value;
-            }
-            RefreshRowsAfterRenumber();
-            ScheduleOverlayRefresh();
-            return;
-        }
-
-        var finalSorted = SortRenumberJobsByLayout(currentJobs, dialog.HorizontalFirst);
-        ApplyRenumbering(finalSorted, dialog.Prefix, dialog.Suffix, dialog.StartNumber, dialog.Digits);
-        foreach (var job in currentJobs)
-        {
-            // 图号重排后，打印顺序应重新按新图号计算，清掉手动优先级。
-            job.SortPriority = 0;
-        }
-        RefreshRowsAfterRenumber();
-        // 图号重排窗口中的方向同时作为下次默认值，并与其它位置排序入口保持一致。
-        _settings.SortOrderHorizontalFirst = dialog.HorizontalFirst;
-        AppSettingsStore.TrySave(_settings, out _);
-
-        // 反写 CAD 文件中的图号（批量：共享一次文档锁定/事务/图框库加载）。
-        var updated = CadTextUpdater.UpdateDrawingNumbers(finalSorted, _document);
-        ScheduleOverlayRefresh();
-
-        if (updated < finalSorted.Count)
-        {
-            MessageBox.Show(
-                $"图号重排完成，已反写 CAD {updated}/{finalSorted.Count} 处；未反写的内容对应 DWG 未打开，已只修改表格。",
-                "图号重排",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
-    }
-
-    /// <summary>图号变化后刷新表格行显示、文件名与输出路径。</summary>
-    private void RefreshRowsAfterRenumber()
-    {
-        foreach (var row in _rows)
-        {
-            row.RefreshFromJob();
-        }
-
-        RefreshFileNames();
-        RefreshOutputPaths();
-        _grid.Items.Refresh();
-    }
-
-    private void ShowRenumberPreviewOverlay(IReadOnlyList<PlotJob> previewOrder)
-    {
-        try
-        {
-            var currentJobs = previewOrder
-                .Where(job => job.Selected && IsCurrentDocumentJob(job))
-                .ToList();
-            var highlightJob = _highlightedJob != null && currentJobs.Contains(_highlightedJob) ? _highlightedJob : null;
-            // 图号重排预览阶段，红框文字临时显示预计写入的新图号；窗口关闭后恢复为打印顺序数字。
-            _overlay.Show(currentJobs, highlightJob, (job, _) => job.DrawingNumber);
-        }
-        catch
-        {
-            _overlay.Clear();
-            ScheduleOverlayRefresh();
-        }
-    }
-
-    private static void ApplyRenumbering(IReadOnlyList<PlotJob> sorted, string prefix, string suffix, int start, int digits = 0)
-    {
-        if (digits <= 0)
-        {
-            var maxNumber = sorted.Count + start - 1;
-            digits = Math.Max(2, maxNumber.ToString().Length);
-        }
-
-        for (var i = 0; i < sorted.Count; i++)
-        {
-            sorted[i].DrawingNumber = prefix + (start + i).ToString($"D{digits}") + suffix;
-            sorted[i].CadDrawingNumber = sorted[i].DrawingNumber;
-        }
-    }
-
-    /// <summary>从现有图号中检测公共前缀：取最长公共前缀后去掉末尾数字。</summary>
-    private static string DetectCommonDrawingNumberPrefix(IReadOnlyList<PlotJob> jobs)
-    {
-        if (jobs.Count == 0) return "";
-        var numbers = jobs.Select(j => j.DrawingNumber).Where(n => !string.IsNullOrEmpty(n)).ToList();
-        if (numbers.Count == 0) return "";
-
-        // 最长公共前缀
-        var common = numbers[0];
-        for (var i = 1; i < numbers.Count && common.Length > 0; i++)
-        {
-            var len = Math.Min(common.Length, numbers[i].Length);
-            var j = 0;
-            while (j < len && common[j] == numbers[i][j]) j++;
-            common = common.Substring(0, j);
-        }
-
-        // 去掉末尾数字部分（如 JZ-0 → JZ-、JG0 → JG）
-        while (common.Length > 0 && char.IsDigit(common[common.Length - 1]))
-            common = common.Substring(0, common.Length - 1);
-
-        return common;
-    }
-
-    /// </summary>
-    private static List<PlotJob> SortRenumberJobsByLayout(IReadOnlyList<PlotJob> jobs, bool horizontalFirst)
-    {
-        var result = new List<PlotJob>(jobs.Count);
-        var layoutGroups = jobs
-            .GroupBy(job => job.SpaceName ?? "", StringComparer.Ordinal)
-            .OrderBy(group => group.Min(job => job.LayoutTabOrder))
-            .ThenBy(group => group.Key, StringComparer.Ordinal);
-
-        foreach (var layoutGroup in layoutGroups)
-        {
-            result.AddRange(SpatialSorter.Sort(layoutGroup.ToList(), horizontalFirst));
-        }
-
-        return result;
-    }
-
-    /// <summary>任务是否属于当前打开的文档（当前图扫描的任务可能未记录源文件，视为本图）。</summary>
-    private bool IsCurrentDocumentJob(PlotJob job)
-    {
-        var source = job.SourceFile;
-        if (string.IsNullOrWhiteSpace(source))
-        {
-            return true;
-        }
-
-        return IsCurrentDocumentSource(source);
-    }
-
     private void ClearRows_Click(object sender, RoutedEventArgs e) => ClearRows();
 
     private void ClearRows()
@@ -1013,8 +813,6 @@ public sealed partial class RectangleBatchPlotForm : Window
             _settings.FileNameSequenceDigits,
             _settings.FileNameSequenceStartNumber,
             selectedCount);
-        var directory = _outputDirectory.Text.Trim();
-        var outputDirectory = string.IsNullOrWhiteSpace(directory) ? "." : directory;
         var namedRows = new List<Row>();
         var requests = new List<BatchFileNameRequest>();
         var selectedIndex = 0;
@@ -1046,6 +844,12 @@ public sealed partial class RectangleBatchPlotForm : Window
                 // 该框未识别到图号/图名：与整批无属性时一致，用 DWG 名 + 勾选序号。
                 var jobStem = GetJobFileStem(row.Job, stem);
                 baseName = $"{jobStem}{printIndex.ToString($"D{legacyDigits}")}";
+            }
+
+            var outputDirectory = GetOutputDirectory(row.Job);
+            if (string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                outputDirectory = ".";
             }
 
             namedRows.Add(row);
@@ -1882,9 +1686,9 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var directory = _outputDirectory.Text.Trim();
         foreach (var row in _rows)
         {
+            var directory = GetOutputDirectory(row.Job);
             row.Job.OutputPath = Path.Combine(directory, row.FileName);
         }
     }
@@ -2351,8 +2155,7 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var directory = _outputDirectory.Text.Trim();
-        if (string.IsNullOrWhiteSpace(directory))
+        if (_outputDirectoryIsCustom && string.IsNullOrWhiteSpace(_outputDirectory.Text.Trim()))
         {
             MessageBox.Show("请选择输出路径。", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
@@ -2365,12 +2168,36 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        Directory.CreateDirectory(directory);
+        foreach (var outputDir in selected
+                     .Select(job => Path.GetDirectoryName(job.OutputPath))
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            Directory.CreateDirectory(outputDir!);
+        }
+
         SaveCurrentPlotOptions();
         ApplyLeaveMarginSelection(selected);
         var originalPaths = selected.ToDictionary(job => job, job => job.OutputPath);
         string? temporaryDirectory = null;
-        var mergeStem = FileNameSanitizer.Clean(SourceStem());
+        var firstJob = selected[0];
+        var directory = Path.GetDirectoryName(firstJob.OutputPath) ?? "";
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            directory = GetOutputDirectory(firstJob);
+        }
+
+        var mergeSource = firstJob.SourceFile;
+        if (string.IsNullOrWhiteSpace(mergeSource))
+        {
+            mergeSource = _document.Database.Filename;
+        }
+        if (string.IsNullOrWhiteSpace(mergeSource))
+        {
+            mergeSource = _document.Name;
+        }
+
+        var mergeStem = FileNameSanitizer.Clean(Path.GetFileNameWithoutExtension(mergeSource));
         if (string.IsNullOrWhiteSpace(mergeStem))
         {
             mergeStem = "合并图纸";
@@ -2610,15 +2437,14 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        var directory = _outputDirectory.Text.Trim();
-        if (string.IsNullOrWhiteSpace(directory))
+        if (_outputDirectoryIsCustom && string.IsNullOrWhiteSpace(_outputDirectory.Text.Trim()))
         {
             MessageBox.Show("请选择输出路径。", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         var confirm = MessageBox.Show(
-            $"将按当前矩形框拆出 {selected.Count} 个 DWG 文件。\n\n输出位置：{directory}\n\n是否继续？",
+            $"将按当前矩形框拆出 {selected.Count} 个 DWG 文件。\n\n输出位置：{GetOutputLocationDescription()}。\n\n是否继续？",
             "通用型批量拆图",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Question);
@@ -2627,7 +2453,14 @@ public sealed partial class RectangleBatchPlotForm : Window
             return;
         }
 
-        Directory.CreateDirectory(directory);
+        foreach (var outputDir in selected
+                     .Select(job => Path.GetDirectoryName(job.OutputPath))
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            Directory.CreateDirectory(outputDir!);
+        }
+
         SaveCurrentPlotOptions();
         Cursor = Cursors.Wait;
         IsEnabled = false;
@@ -2646,6 +2479,8 @@ public sealed partial class RectangleBatchPlotForm : Window
                     _status.Text = $"拆图中... {completed} / {selected.Count}";
                     Pump();
                 },
+                customOutputDirectory: CustomOutputDirectory,
+                sourceSubfolder: AutomaticOutputSubfolder,
                 explicitOutputPaths: explicitPaths);
 
             var failures = results.Where(result => result.Error != null).ToList();
@@ -2658,12 +2493,15 @@ public sealed partial class RectangleBatchPlotForm : Window
             {
                 result.Job.OutputPath = result.OutputPath;
             }
-                if (_settings.OpenOutputDirectoryAfterBatchPrint)
+
+            var revealDirectory = Path.GetDirectoryName(selected[0].OutputPath)
+                ?? _outputDirectory.Text.Trim();
+            if (_settings.OpenOutputDirectoryAfterBatchPrint)
             {
-                RevealOutput(null, directory);
+                RevealOutput(null, revealDirectory);
             }
             _status.Text = $"拆图完成，共 {selected.Count} 张";
-            MessageBox.Show($"DWG 拆图完成，共 {selected.Count} 张。\n{directory}", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show($"DWG 拆图完成，共 {selected.Count} 张。\n{GetOutputLocationDescription()}", Title, MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
@@ -2991,10 +2829,8 @@ public sealed partial class RectangleBatchPlotForm : Window
 
     private void UpdateAutomaticOutputDirectory()
     {
-        var subfolder = AutomaticOutputSubfolder;
-        SetOutputDirectoryText(string.IsNullOrWhiteSpace(subfolder)
-            ? SourceDirectory()
-            : Path.Combine(SourceDirectory(), subfolder));
+        // 文本框仍显示代表路径（当前打开图）；各行 OutputPath 由 GetOutputDirectory(job) 按源 DWG 计算。
+        SetOutputDirectoryText(AppendAutomaticSubfolder(SourceDirectory()));
     }
 
     private void SetOutputDirectoryText(string text)
@@ -3054,6 +2890,52 @@ public sealed partial class RectangleBatchPlotForm : Window
     private string? AutomaticOutputSubfolder => _savePathModeCombo.SelectedIndex == 1
         ? FileNameSanitizer.Clean(SelectedOutputFormat)
         : null;
+
+    private string? CustomOutputDirectory => _outputDirectoryIsCustom
+        ? _outputDirectory.Text.Trim()
+        : null;
+
+    private string AppendAutomaticSubfolder(string sourceDirectory)
+    {
+        var subfolder = AutomaticOutputSubfolder;
+        return string.IsNullOrWhiteSpace(subfolder)
+            ? sourceDirectory
+            : Path.Combine(sourceDirectory, subfolder);
+    }
+
+    /// <summary>
+    /// 非自定义目录时按「这一行实际要打的 DWG」所在目录（及可选 PDF 等子目录）计算输出路径，
+    /// 与图框块 BatchPlotForm.GetOutputDirectory 对齐；手动统一目录时仍用文本框路径。
+    /// </summary>
+    private string GetOutputDirectory(PlotJob job)
+    {
+        if (_outputDirectoryIsCustom)
+        {
+            return _outputDirectory.Text.Trim();
+        }
+
+        var sourceFile = !string.IsNullOrWhiteSpace(job.SourceFile) && File.Exists(job.SourceFile)
+            ? job.SourceFile
+            : _document.Database.Filename;
+        var sourceDirectory = string.IsNullOrWhiteSpace(sourceFile)
+            ? SourceDirectory()
+            : Path.GetDirectoryName(sourceFile) ?? SourceDirectory();
+        return AppendAutomaticSubfolder(sourceDirectory);
+    }
+
+    private string GetOutputLocationDescription()
+    {
+        if (_outputDirectoryIsCustom)
+        {
+            return _outputDirectory.Text.Trim();
+        }
+
+        var subfolder = AutomaticOutputSubfolder;
+        return string.IsNullOrWhiteSpace(subfolder)
+            ? "每个源 DWG 所在目录"
+            : $"每个源 DWG 所在目录下的 {subfolder} 文件夹";
+    }
+
     /// <summary>PNG/JPG 与 PDF 共用 PDF 绘图仪，打印后再按设置 DPI 转图。</summary>
     private string SelectedDevice() => IsDwfOutput
         ? _dwfPlotDevice

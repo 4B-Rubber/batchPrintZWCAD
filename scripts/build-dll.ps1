@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Zwcad", "AutoCAD", "AutoCAD2025", "All")]
     [string]$Target = "Zwcad",
 

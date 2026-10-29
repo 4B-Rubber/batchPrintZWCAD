@@ -1,4 +1,4 @@
-# 双平台远程：GitHub（主拉取）+ Gitee（同步推送）。
+﻿# 双平台远程：GitHub（主拉取）+ Gitee（同步推送）。
 # 由 push-all.ps1 / publish-release.ps1 点用，也可单独：. .\scripts\remotes.ps1; Ensure-DualRemotes
 
 $script:BatchPlotGitHubUrl = "https://github.com/Edwardhehe/batchPrintZWCAD.git"
